@@ -11,6 +11,7 @@ import fr.yannickuhrig.vyzo.tv.TvPlayerChannels
 import fr.yannickuhrig.vyzo.tv.TvPlayerChoice
 import fr.yannickuhrig.vyzo.tv.TvPlayerGuide
 import fr.yannickuhrig.vyzo.tv.TvPlayerMenu
+import fr.yannickuhrig.vyzo.tv.TvScreensaver
 import fr.yannickuhrig.vyzo.tv.TvVodBar
 import fr.yannickuhrig.vyzo.tv.TvSearch
 import fr.yannickuhrig.vyzo.tv.TvSeriesDetail
@@ -43,5 +44,6 @@ object FlavorScreens {
             menu = { TvPlayerMenu(it) },
             choice = { TvPlayerChoice(it) },
         ),
+        screensaver = { TvScreensaver(it) },
     )
 }

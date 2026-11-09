@@ -38,6 +38,8 @@ class VariantNav(
     val live: @Composable (onOpenPlayer: (ChannelEntity, String) -> Unit) -> Unit,
     val sport: @Composable (onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, ProgramEntity) -> Unit) -> Unit,
     val player: VariantPlayer,
+    /** Économiseur d'écran, posé au-dessus de tout ; le paramètre dit s'il peut se déclencher. */
+    val screensaver: (@Composable (allowed: Boolean) -> Unit)? = null,
 )
 
 val LocalVariantNav = staticCompositionLocalOf<VariantNav?> { null }

@@ -60,6 +60,11 @@ import fr.yannickuhrig.vyzo.ui.theme.VyzoTheme
 import fr.yannickuhrig.vyzo.ui.vod.VodCard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
+import fr.yannickuhrig.vyzo.data.link.DeepLinkKind
+import fr.yannickuhrig.vyzo.data.link.DeepLink
+import androidx.compose.ui.test.assertCountEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -284,6 +289,34 @@ class TvNavScreenTest : ScreensBase() {
     }
 
     /** OK sur « Films » entre dans le catalogue ; la fiche s'ouvre sans menu ; Retour retrouve l'affiche. */
+    private fun firstMovie() = runBlocking { app.container.db.movies().recentlyAdded(listOf(playlistId), false).first().first() }
+
+    private fun openFromLink(uid: String): MutableStateFlow<LaunchRequest?> {
+        val launch = MutableStateFlow<LaunchRequest?>(LaunchRequest.Open(DeepLink(DeepLinkKind.MOVIE, uid)))
+        shoot("", FormFactor.TV, 4000, capture = false) {
+            Remote { AppRoot(app.container, launch, FlavorScreens.home, FlavorScreens.details, FlavorScreens.nav) }
+        }
+        return launch
+    }
+
+    @Test fun lienVersUnFilmVerrouilleDemandeLeCode() {
+        val movie = firstMovie()
+        runBlocking {
+            app.container.db.categories().markAdult(listOf(movie.categoryUid))
+            app.container.parental.setPin("1234")
+            withTimeout(5_000) { app.container.parental.pinSet.first { it } }
+        }
+        val launch = openFromLink(movie.uid)
+        assertEquals(null, launch.value)
+        compose.onNodeWithText("Ce contenu est verrouillé").assertExists()
+    }
+
+    @Test fun lienInconnuNOuvreRien() {
+        val launch = openFromLink("inconnu")
+        assertEquals(null, launch.value)
+        compose.onAllNodesWithText("Ce contenu est verrouillé").assertCountEquals(0)
+    }
+
     @Test fun duMenuAuCatalogueEtRetourDeLaFiche() {
         startOnHome()
         var poster = 0f

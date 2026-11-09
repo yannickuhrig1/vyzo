@@ -106,7 +106,16 @@
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize">
+            <!-- Sans BROWSABLE : ces liens viennent de l'écran d'accueil ou d'une autre appli, jamais d'une page web. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="vyzo" android:host="play" />
+                <data android:scheme="vyzo" android:host="movie" />
+                <data android:scheme="vyzo" android:host="series" />
+            </intent-filter>
+        </activity>
 
         <receiver
             android:name=".schedule.AlarmReceiver"

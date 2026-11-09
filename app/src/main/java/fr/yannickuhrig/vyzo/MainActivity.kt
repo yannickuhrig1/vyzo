@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -15,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import fr.yannickuhrig.vyzo.player.PlayerManager
 import fr.yannickuhrig.vyzo.player.bestRefreshRate
 import fr.yannickuhrig.vyzo.ui.AppRoot
+import fr.yannickuhrig.vyzo.data.link.DeepLink
 import fr.yannickuhrig.vyzo.ui.LaunchRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -41,6 +43,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
         setContent { AppRoot(container, launchRequest, FlavorScreens.home, FlavorScreens.details, FlavorScreens.nav) }
         askNotificationsOnce()
+        if (savedInstanceState == null) FlavorStartup.onActivityCreated(this)
 
         // Mise à jour au lancement si les données sont plus anciennes que l'intervalle choisi.
         lifecycleScope.launch {
@@ -106,8 +109,19 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val audio = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE
+        return container.screenIdle.onKey(event.action == KeyEvent.ACTION_DOWN, audio) || super.dispatchKeyEvent(event)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        container.screenIdle.touch()
+    }
+
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        if (intent.action == Intent.ACTION_VIEW) DeepLink.parse(intent.dataString)?.let { launchRequest.value = LaunchRequest.Open(it) }
         intent.getStringExtra(EXTRA_PLAY_CHANNEL)?.let { launchRequest.value = LaunchRequest.PlayChannel(it) }
         intent.getLongExtra(EXTRA_REMINDER, 0).takeIf { it > 0 }?.let { launchRequest.value = LaunchRequest.Reminder(it) }
         intent.getStringExtra(EXTRA_OPEN_SERIES)?.let { launchRequest.value = LaunchRequest.OpenSeries(it) }

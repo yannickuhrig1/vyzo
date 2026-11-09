@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +98,23 @@ fun HomeEditScreen() {
                 "Quand on ne parcourt pas les rangées, l'arrière-plan passe d'un titre à l'autre",
                 s.homeRotateBackdrop,
             ) { v -> update { it.copy(homeRotateBackdrop = v) } }
+        }
+        item {
+            if (isTv()) {
+                ToggleRow(
+                    "Rangées sur l'écran d'accueil de la TV",
+                    "Reprendre et Favoris, hors de l'appli. Le contenu verrouillé n'y apparaît jamais",
+                    s.tvHomeRows,
+                ) { v -> update { it.copy(tvHomeRows = v) } }
+                SettingRow(
+                    "Économiseur d'écran",
+                    if (s.screensaverMinutes == 0) "Désactivé" else "Après ${s.screensaverMinutes} min sans action, hors lecture",
+                    Icons.Default.Wallpaper,
+                ) {
+                    val next = SCREENSAVER_CHOICES[(SCREENSAVER_CHOICES.indexOf(s.screensaverMinutes) + 1) % SCREENSAVER_CHOICES.size]
+                    update { it.copy(screensaverMinutes = next) }
+                }
+            }
         }
 
         item { SectionTitle(if (multiProfile && profile != null) "Rangées de l'accueil de ${profile!!.name}" else "Rangées affichées") }
@@ -211,3 +229,5 @@ fun HomeEditScreen() {
         )
     }
 }
+
+private val SCREENSAVER_CHOICES = listOf(0, 5, 10, 15, 30)

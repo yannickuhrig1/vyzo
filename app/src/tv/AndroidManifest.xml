@@ -9,6 +9,11 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- Android 11+ : sans cette déclaration, le fournisseur des rangées d'accueil reste invisible pour l'appli. -->
+    <queries>
+        <provider android:authorities="android.media.tv" />
+    </queries>
+
     <application>
         <!-- LEANBACK_LAUNCHER pour Android TV et Google TV, LAUNCHER pour Fire TV. -->
         <activity android:name=".MainActivity">

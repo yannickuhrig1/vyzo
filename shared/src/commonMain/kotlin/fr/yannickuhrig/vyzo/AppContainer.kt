@@ -56,6 +56,7 @@ class AppContainer(
     )
     val events = AppEvents()
     val pip = PipState()
+    val screenIdle = fr.yannickuhrig.vyzo.ui.common.ScreenIdle()
     val sleepTimer by lazy {
         fr.yannickuhrig.vyzo.player.SleepTimer(scope, onExpire = { scope.launch(kotlinx.coroutines.Dispatchers.Main) { player.stop() } })
     }

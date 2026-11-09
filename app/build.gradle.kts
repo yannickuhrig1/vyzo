@@ -130,6 +130,8 @@ dependencies {
 
     implementation("androidx.lifecycle:lifecycle-process:2.9.4")
     implementation("androidx.work:work-runtime-ktx:2.10.3")
+    // Rangées de l'écran d'accueil d'Android TV : version TV seulement.
+    "tvImplementation"("androidx.tvprovider:tvprovider:1.1.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.datastore:datastore-preferences:1.1.7")
 

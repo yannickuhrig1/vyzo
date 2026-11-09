@@ -95,7 +95,10 @@ class VyzoApp : Application(), SingletonImageLoader.Factory {
                 if (downloadsActive) DownloadService.start(this@VyzoApp)
             }
 
-            override fun onStop(owner: LifecycleOwner) = c.onBackground()
+            override fun onStop(owner: LifecycleOwner) {
+                c.onBackground()
+                FlavorStartup.onAppBackground(this@VyzoApp)
+            }
         })
         c.scope.launch {
             c.downloads.observeAll().map { l -> l.any { it.isDownloading || it.isQueued } }.distinctUntilChanged().collect { active ->
@@ -106,6 +109,7 @@ class VyzoApp : Application(), SingletonImageLoader.Factory {
         c.scope.launch {
             val s = c.settings.get()
             SyncWorker.schedule(this@VyzoApp, s.refreshHours)
+            FlavorStartup.onAppStart(this@VyzoApp)
             runCatching { c.reminders.rescheduleAll() }
             runCatching { c.recordings.rescheduleAll() }
             runCatching { CrashReporter.sendPending(c.platform, s.sendCrashReports) }

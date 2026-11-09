@@ -104,6 +104,7 @@ import androidx.savedstate.read
 import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
+import fr.yannickuhrig.vyzo.data.link.deepLinkTarget
 import fr.yannickuhrig.vyzo.data.repo.Repository
 import fr.yannickuhrig.vyzo.schedule.AppEvent
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
@@ -138,6 +139,7 @@ import fr.yannickuhrig.vyzo.ui.profile.PinDialog
 import fr.yannickuhrig.vyzo.ui.profile.ProfileAvatar
 import fr.yannickuhrig.vyzo.ui.profile.ProfilesScreen
 import fr.yannickuhrig.vyzo.ui.profile.WhoIsWatchingScreen
+import fr.yannickuhrig.vyzo.ui.profile.rememberParentalGate
 import fr.yannickuhrig.vyzo.ui.settings.AccountScreen
 import fr.yannickuhrig.vyzo.ui.settings.ChannelsEditScreen
 import fr.yannickuhrig.vyzo.ui.settings.EpgSourcesScreen
@@ -164,6 +166,7 @@ sealed interface LaunchRequest {
     data class PlayChannel(val uid: String) : LaunchRequest
     data class Reminder(val id: Long) : LaunchRequest
     data class OpenSeries(val uid: String) : LaunchRequest
+    data class Open(val link: fr.yannickuhrig.vyzo.data.link.DeepLink) : LaunchRequest
 }
 
 data class Dest(val route: String, val label: String, val icon: ImageVector)
@@ -321,19 +324,23 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
         if (!c.pip.isMiniPlayerMode.value && vodRoute && c.player.current.value?.isLive == true) c.player.stop()
     }
 
+    // Lue une seule fois : la demande est effacée dès qu'elle est traitée, parfois avant la fin de ce démarrage.
+    val startedByRequest = remember { launch.value != null }
+    val gate = rememberParentalGate()
+
     // Démarrage : dernière chaîne, intents (notification de rappel…), événements internes.
     LaunchedEffect(Unit) {
         val s = c.settings.get()
         // Accueil choisi comme écran de démarrage : il remplace « TV en direct » en bas de la pile,
         // pour que Retour depuis l'accueil quitte l'appli au lieu de passer par « TV en direct ».
-        if (s.startScreen == "HOME" && launch.value == null) {
+        if (s.startScreen == "HOME" && !startedByRequest) {
             baseRoute = Routes.HOME
             nav.navigate(Routes.HOME) {
                 popUpTo(Routes.LIVE) { inclusive = true }
                 launchSingleTop = true
             }
         }
-        if (s.autoplayLast && s.lastChannelUid.isNotBlank() && launch.value == null && c.repo.channel(s.lastChannelUid) != null) {
+        if (s.autoplayLast && s.lastChannelUid.isNotBlank() && !startedByRequest && c.repo.channel(s.lastChannelUid) != null) {
             nav.navigate(Routes.channel(s.lastChannelUid, s.lastGroupKey))
         }
     }
@@ -350,6 +357,12 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
             }
             is LaunchRequest.OpenSeries -> {
                 if (c.db.series().get(r.uid) != null) nav.navigate(Routes.series(r.uid))
+                launch.value = null
+            }
+            is LaunchRequest.Open -> {
+                val target = c.deepLinkTarget(r.link)
+                if (target == null) c.platform.toast("Ce contenu n'est pas disponible")
+                else gate(target.locked) { nav.navigate(target.route) }
                 launch.value = null
             }
             null -> Unit
@@ -535,6 +548,7 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
             }
             PlatformBackHandler { profilePicker = false }
         }
+        variantNav?.screensaver?.invoke(!isPlayer)
     }
 }
 

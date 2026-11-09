@@ -149,6 +149,10 @@ data class AppSettings(
     val homeClock: Boolean = true,
     /** Accueil : l'arrière-plan fait défiler les affiches tant qu'on ne parcourt pas les rangées. */
     val homeRotateBackdrop: Boolean = true,
+    /** TV : rangées Reprendre et Favoris sur l'écran d'accueil du système. */
+    val tvHomeRows: Boolean = true,
+    /** TV : minutes d'inactivité avant l'économiseur d'écran (0 = désactivé). */
+    val screensaverMinutes: Int = 5,
     /** Accueil : ville de la météo (vide = pas de météo). */
     val weatherCity: String = "",
     val weatherLat: Double = 0.0,
