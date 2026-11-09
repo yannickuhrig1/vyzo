@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Version de test (fr.yannickuhrig.vyzo.debug) : s'installe à côté de Vyzo sans le remplacer. -->
+    <string name="app_name">Vyzo test</string>
+</resources>

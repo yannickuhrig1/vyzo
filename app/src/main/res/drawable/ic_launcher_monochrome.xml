@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Silhouette du V Vyzo pour les icônes à thème (Android 13+). Repère du logo 1024 ramené à 66 dp au centre du canevas de 108 dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="21" android:translateY="21" android:scaleX="0.064453" android:scaleY="0.064453">
+        <path android:pathData="M512,760 L764,260" android:strokeColor="#FFFFFFFF" android:strokeWidth="210" android:strokeLineCap="round" />
+        <path android:pathData="M260,360 L512,760" android:strokeColor="#FFFFFFFF" android:strokeWidth="210" android:strokeLineCap="round" />
+    </group>
+</vector>

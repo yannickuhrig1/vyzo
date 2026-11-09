@@ -1,0 +1,8 @@
+# Profil de référence (Baseline Profile) de Vyzo.
+# Android compile ce code à l'installation au lieu d'attendre qu'il soit utilisé plusieurs fois : le démarrage,
+# la grille du guide, les listes de chaînes, les fiches films/séries et le lecteur sont fluides dès la première
+# ouverture, y compris sur les box peu puissantes (Fire TV Stick, box Android d'entrée de gamme).
+# Compose, Media3 et Room fournissent déjà leurs propres profils ; cette règle couvre le code de l'appli.
+# Les règles sont traduites automatiquement après l'obfuscation par R8.
+HSPLfr/yannickuhrig/vyzo/**;->**(**)**
+Lfr/yannickuhrig/vyzo/**;

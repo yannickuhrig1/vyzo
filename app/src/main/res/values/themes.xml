@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="vyzo_background">#0A0E1A</color>
+    <color name="vyzo_icon_bg">#FFFFFF</color>
+    <style name="Theme.Vyzo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/vyzo_background</item>
+        <item name="android:colorBackground">@color/vyzo_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/vyzo_background</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23" xmlns:tools="http://schemas.android.com/tools">false</item>
+    </style>
+</resources>

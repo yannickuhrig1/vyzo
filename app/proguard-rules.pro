@@ -1,0 +1,2 @@
+# Vyzo
+-keep class androidx.media3.decoder.ffmpeg.** { *; }

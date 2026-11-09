@@ -1,0 +1,109 @@
+# Construit Vyzo PC (.deb pour Linux, .msi pour Windows avec VLC inclus) et publie la release GitHub.
+# Se lance à chaque tag « v* » ou à la main (onglet Actions) ; le tag est alors créé à partir de vyzo.versionName.
+# Notes : release-notes/vX.Y.Z.md. Les APK TV et mobile, signés sur le PC qui a la clé, partent par scripts/publier-mise-a-jour.sh.
+# Les fichiers vont directement dans la release (pas d'artefacts : le stockage des artefacts d'un dépôt privé est limité).
+name: Vyzo PC
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Version
+        id: v
+        run: echo "version=$(grep -m1 '^vyzo.versionName=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: Vyzo ${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes/v${{ steps.v.outputs.version }}.md
+          prerelease: ${{ contains(steps.v.outputs.version, '-') }}
+
+  linux:
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Tests (parseurs, synchro, compte, mises à jour)
+        run: ./gradlew :desktop:test --no-daemon
+      - name: Paquet .deb
+        run: ./gradlew :desktop:packageReleaseDeb --no-daemon
+      - name: Dépendance à VLC
+        run: |
+          sudo apt-get install -y fakeroot
+          for f in desktop/build/compose/binaries/main-release/deb/*.deb; do desktop/packaging/deb-depends.sh "$f"; done
+      - name: Aucun jeton GitHub dans le .deb
+        run: scripts/verifier-sans-jeton.sh desktop/build/compose/binaries/main-release/deb/*.deb
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: desktop/build/compose/binaries/main-release/deb/*.deb
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: VLC pour l'installeur
+        shell: pwsh
+        run: ./desktop/packaging/prepare-vlc-windows.ps1
+      - name: Installeur .msi
+        run: ./gradlew :desktop:packageReleaseMsi --no-daemon
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: desktop/build/compose/binaries/main-release/msi/*.msi
+
+  macos:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Paquet macOS .dmg
+        run: |
+          ./gradlew :desktop:packageDmg --no-daemon
+          mkdir -p dist-mac
+          V="${{ needs.release.outputs.version }}"
+          for f in desktop/build/compose/binaries/main-release/dmg/*.dmg desktop/build/compose/binaries/main/dmg/*.dmg; do
+            if [ -f "$f" ]; then
+              cp "$f" "dist-mac/Vyzo-$V.dmg"
+            fi
+          done
+          ls -la dist-mac
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: dist-mac/*.dmg

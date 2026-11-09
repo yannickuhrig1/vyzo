@@ -1,0 +1,17 @@
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+
+# Clé de signature : à garder hors du dépôt (sauvegarde séparée)
+keystore/
+*.jks
+*.keystore
+keystore.properties
+
+# VLC téléchargé pour l'installeur Windows (desktop/packaging/prepare-vlc-windows.ps1)
+desktop/resources/windows-x64/vlc/
+dist/

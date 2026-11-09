@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" width="320" height="180">
+  <defs>
+    <!-- Dégradé de fond sombre bleu nuit -->
+    <linearGradient id="bgDark" x1="0" y1="0" x2="320" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#121830" />
+      <stop offset="100%" stop-color="#0D1220" />
+    </linearGradient>
+
+    <!-- Branche gauche du V : Cyan vers Violet -->
+    <linearGradient id="tvLeftBounce" x1="52" y1="62" x2="95" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00E5FF" />
+      <stop offset="45%" stop-color="#3A86FF" />
+      <stop offset="100%" stop-color="#8338EC" />
+    </linearGradient>
+
+    <!-- Branche droite du V : Magenta vers Jaune/Ambre -->
+    <linearGradient id="tvRightBounce" x1="88" y1="125" x2="134" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9B287B" />
+      <stop offset="30%" stop-color="#FF006E" />
+      <stop offset="70%" stop-color="#FB5607" />
+      <stop offset="100%" stop-color="#FFBE0B" />
+    </linearGradient>
+
+    <!-- Halo lumineux subtil derrière le logo -->
+    <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="320" height="180">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- Fond 16:9 Android TV -->
+  <rect width="320" height="180" fill="url(#bgDark)" />
+
+  <!-- Icône "Le Rebond" à gauche -->
+  <g filter="url(#glow)">
+    <path d="M 92 118 L 128 52" stroke="url(#tvRightBounce)" stroke-width="28" stroke-linecap="round" fill="none" />
+    <path d="M 58 66 L 92 118" stroke="url(#tvLeftBounce)" stroke-width="28" stroke-linecap="round" fill="none" />
+  </g>
+
+  <polygon points="88.8,109.3 88.8,117.3 95.7,113.3" fill="#FFFFFF" opacity="0.9" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="0.8" stroke-linejoin="round" />
+
+  <!-- Logotype "Vyzo" à droite -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- V -->
+    <path d="M 162 70 L 177 104 L 192 70" />
+    <!-- y -->
+    <path d="M 205 81 L 218 104" />
+    <path d="M 231 81 L 212 114" />
+    <!-- z -->
+    <path d="M 244 81 L 267 81 L 244 104 L 267 104" />
+    <!-- o -->
+    <circle cx="291" cy="92.5" r="11.5" />
+  </g>
+</svg>

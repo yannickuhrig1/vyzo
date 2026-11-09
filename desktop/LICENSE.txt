@@ -1,0 +1,17 @@
+Vyzo PC — lecteur IPTV pour Linux et Windows
+© 2026 Yannick Uhrig
+
+Vyzo ne fournit aucun contenu : l'application lit uniquement les sources (playlists M3U, comptes Xtream Codes,
+portails Stalker) que l'utilisateur ajoute lui-même. Vérifie que tu as le droit de regarder les flux de tes sources.
+
+Vyzo PC utilise :
+- libVLC 3 (VideoLAN, LGPL 2.1 ou ultérieure) — https://www.videolan.org/vlc/libvlc.html
+  Sous Windows, une copie de VLC est livrée avec l'installeur, dans le dossier « vlc » de l'application.
+- vlcj (Caprica Software, GPL 3) — https://github.com/caprica/vlcj
+- Compose Multiplatform, Kotlin, kotlinx (JetBrains, Apache 2.0)
+- AndroidX Room, SQLite, DataStore, Lifecycle, Navigation (Google, Apache 2.0)
+- OkHttp, Okio (Square, Apache 2.0), Coil (Apache 2.0), ZXing (Apache 2.0), kXML 2 (BSD)
+- JNA (Apache 2.0 / LGPL 2.1)
+
+Comme vlcj est sous licence GPL 3, Vyzo PC est distribué selon les termes de la GPL 3 si tu le partages :
+https://www.gnu.org/licenses/gpl-3.0.html
