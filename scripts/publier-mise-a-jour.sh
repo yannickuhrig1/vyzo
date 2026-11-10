@@ -10,6 +10,7 @@
 # met à jour latest-tv.json, latest-mobile.json et latest.json (Vyzo PC). Il y dépose aussi l'archive des sources de la
 # version (vyzo-sources-X.Y.Z.tar.gz), que la GPL impose de fournir avec les applis : le dépôt doit donc être propre.
 # Les appareils le proposent au prochain lancement (ou tout de suite avec Réglages → Mises à jour → Rechercher).
+# Les APK signés sont aussi joints à la release GitHub vX.Y.Z, pour une installation à la main.
 #
 # Dans latest.json, le seul APK annoncé est la version de transition universelle (vyzo-1.10.5.apk) : l'ancienne appli
 # unique (TV et téléphone) lit ce fichier et ne doit recevoir ni l'APK TV sur un téléphone ni l'inverse. Une fois installée,
@@ -27,6 +28,8 @@ shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 
 URL="${VYZO_SUPABASE_URL:-https://jucbmlwigbptgxqoiqih.supabase.co}"
+# Dépôt explicite : avec deux remotes, gh refuse d'en choisir un dans un vrai terminal.
+GH_REPO_NAME="${VYZO_GITHUB_REPO:-yannickuhrig1/vyzo}"
 KEY="${SUPABASE_SECRET_KEY:?Indique la clé secrète Supabase : SUPABASE_SECRET_KEY=sb_secret_… $0 \"notes\"}"
 NOTES="${1:-}"
 
@@ -66,9 +69,14 @@ scripts/verifier-sans-jeton.sh "$APK_TV" "$APK_MOBILE" "$DEB"
 MSI="${VYZO_MSI:-}"
 if [ -z "$MSI" ] && command -v gh > /dev/null; then
   TMP_MSI=$(mktemp -d)
-  if gh release download "v$VN" -p '*.msi' -D "$TMP_MSI" 2> /dev/null; then
-    MSI=$(ls "$TMP_MSI"/*.msi | head -1)
-  fi
+  # 170 Mo : une coupure réseau en cours de route arrive. Un fichier incomplet n'est jamais retenu.
+  for attempt in 1 2 3; do
+    if gh release download "v$VN" -R "$GH_REPO_NAME" -p '*.msi' -D "$TMP_MSI" --clobber; then
+      MSI=$(ls "$TMP_MSI"/*.msi | head -1)
+      break
+    fi
+    echo "Téléchargement du .msi interrompu (essai $attempt sur 3)." >&2
+  done
 fi
 
 upload() { # upload <fichier local> <nom distant> <type>
@@ -165,5 +173,20 @@ print(json.dumps({
 PY
 upload "$LATEST" "latest.json" "application/json"
 rm -f "$LATEST"
+
+# La mise à jour intégrée passe par Supabase : la release GitHub ne doit pas pouvoir faire échouer la publication.
+attach_apks() {
+  local dir
+  dir=$(mktemp -d)
+  cp "$APK_TV" "$dir/vyzo-tv-$VN.apk"
+  cp "$APK_MOBILE" "$dir/vyzo-mobile-$VN.apk"
+  if command -v gh > /dev/null && gh release upload "v$VN" -R "$GH_REPO_NAME" --clobber "$dir"/*.apk; then
+    echo "APK joints à la release GitHub v$VN."
+  else
+    echo "APK non joints à la release GitHub v$VN (release absente ou gh non connecté)." >&2
+  fi
+  rm -rf "$dir"
+}
+attach_apks
 
 echo "Publié : $URL/storage/v1/object/public/releases/latest.json"
