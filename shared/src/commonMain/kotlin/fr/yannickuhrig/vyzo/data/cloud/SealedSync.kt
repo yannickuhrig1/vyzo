@@ -3,6 +3,7 @@ package fr.yannickuhrig.vyzo.data.cloud
 import fr.yannickuhrig.vyzo.data.db.AppDatabase
 import fr.yannickuhrig.vyzo.data.db.CategoryPrefEntity
 import fr.yannickuhrig.vyzo.data.db.ChannelPrefEntity
+import fr.yannickuhrig.vyzo.data.db.EpgMode
 import fr.yannickuhrig.vyzo.data.db.EpgSourceEntity
 import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
 import fr.yannickuhrig.vyzo.data.db.PlaylistKeys
@@ -48,7 +49,10 @@ internal data class SealedPlaylist(
 )
 
 @Serializable
-internal data class SealedEpg(val name: String, val url: String, val enabled: Boolean)
+internal data class SealedEpg(
+    val name: String, val url: String, val enabled: Boolean,
+    val priority: Int = 0, val mode: String = EpgMode.FILL,
+)
 
 /** [rest] : uid sans l'identifiant local de la playlist, qui change d'un appareil à l'autre. */
 @Serializable
@@ -106,9 +110,11 @@ internal object SealedKeys {
     private const val OMDB = "omdb"
     private const val OPEN_SUBTITLES = "opensubtitles"
     private const val GITHUB = "github"
+    private const val TRAKT_ID = "trakt_id"
+    private const val TRAKT_SECRET = "trakt_secret"
 
     fun of(s: AppSettings): Map<String, String> =
-        mapOf(TMDB to s.tmdbApiKey, OMDB to s.omdbApiKey, OPEN_SUBTITLES to s.openSubtitlesApiKey, GITHUB to s.githubToken).filterValues { it.isNotBlank() }
+        mapOf(TMDB to s.tmdbApiKey, OMDB to s.omdbApiKey, OPEN_SUBTITLES to s.openSubtitlesApiKey, GITHUB to s.githubToken, TRAKT_ID to s.traktClientId, TRAKT_SECRET to s.traktClientSecret).filterValues { it.isNotBlank() }
 
     /** Null pour une clé inconnue : elle vient d'une version plus récente de l'appli, et doit rester sur le compte. */
     fun set(s: AppSettings, id: String, value: String): AppSettings? = when (id) {
@@ -116,6 +122,8 @@ internal object SealedKeys {
         OMDB -> s.copy(omdbApiKey = value)
         OPEN_SUBTITLES -> s.copy(openSubtitlesApiKey = value)
         GITHUB -> s.copy(githubToken = value)
+        TRAKT_ID -> s.copy(traktClientId = value)
+        TRAKT_SECRET -> s.copy(traktClientSecret = value)
         else -> null
     }
 }
@@ -156,7 +164,7 @@ internal class SealedSync(
         db.playlists().observeAll().map { all -> all.map { it.toSealed() } }.distinctUntilChanged().drop(1).map { },
         settings.flow.map { SealedSettings.of(it) }.distinctUntilChanged().drop(1).map { },
         settings.flow.map { SealedKeys.of(it) }.distinctUntilChanged().drop(1).map { },
-        db.epg().observeSources().map { all -> all.filter { !it.auto }.map { SealedEpg(it.name, it.url, it.enabled) } }.distinctUntilChanged().drop(1).map { },
+        db.epg().observeSources().map { all -> all.filter { !it.auto }.map { SealedEpg(it.name, it.url, it.enabled, it.priority, it.mode) } }.distinctUntilChanged().drop(1).map { },
         db.categories().observePrefs().distinctUntilChanged().drop(1).map { },
         db.channelPrefs().observeAll().distinctUntilChanged().drop(1).map { },
     )
@@ -293,7 +301,7 @@ internal class SealedSync(
             if (prefs.categories.isNotEmpty() || prefs.channels.isNotEmpty()) add(Item(KIND_PREFS, id, encode(SealedPrefs.serializer(), prefs)))
         }
         db.epg().sources().filter { !it.auto && portable(it.url) }.distinctBy { it.url }.forEach {
-            add(Item(KIND_EPG, VaultCrypto.sha256(it.url).take(24), encode(SealedEpg.serializer(), SealedEpg(it.name, it.url, it.enabled))))
+            add(Item(KIND_EPG, VaultCrypto.sha256(it.url).take(24), encode(SealedEpg.serializer(), SealedEpg(it.name, it.url, it.enabled, it.priority, it.mode))))
         }
         add(Item(KIND_SETTINGS, SETTINGS_ID, encode(SealedSettings.serializer(), SealedSettings.of(settings.get()))))
         SealedKeys.of(settings.get()).forEach { (id, value) -> add(Item(KIND_KEY, id, value)) }
@@ -393,8 +401,11 @@ internal class SealedSync(
 
     private suspend fun applyEpg(e: SealedEpg): Boolean {
         val local = db.epg().sources().firstOrNull { !it.auto && it.url == e.url }
-        if (local == null) db.epg().insertSource(EpgSourceEntity(name = e.name, url = e.url, enabled = e.enabled))
-        else if (local.name != e.name || local.enabled != e.enabled) db.epg().updateSource(local.copy(name = e.name, enabled = e.enabled))
+        val received = EpgSourceEntity(name = e.name, url = e.url, enabled = e.enabled, priority = e.priority, mode = e.mode)
+        if (local == null) db.epg().insertSource(received)
+        else if (local.name != e.name || local.enabled != e.enabled || local.priority != e.priority || local.mode != e.mode) {
+            db.epg().updateSource(local.copy(name = e.name, enabled = e.enabled, priority = e.priority, mode = e.mode))
+        }
         return true
     }
 

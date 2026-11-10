@@ -44,9 +44,9 @@ fun interface SaveFileLauncher {
 @Composable
 expect fun rememberVoiceSearch(onResult: (String) -> Unit): (() -> Unit)?
 
-/** Pendant la lecture : écran allumé, barres système masquées, paysage sur téléphone. */
+/** Pendant la lecture : écran allumé, barres système masquées, [orientation] choisie sur téléphone. */
 @Composable
-expect fun PlayerWindowEffect(tv: Boolean)
+expect fun PlayerWindowEffect(tv: Boolean, orientation: String)
 
 /** Masque le pointeur de la souris (lecteur plein écran sur PC) ; sans effet sur Android. */
 expect fun Modifier.hideCursor(hidden: Boolean): Modifier

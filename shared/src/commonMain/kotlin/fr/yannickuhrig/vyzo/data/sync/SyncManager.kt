@@ -8,7 +8,9 @@ import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ChannelPrefEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.db.EpgNameMapEntity
+import fr.yannickuhrig.vyzo.data.db.EpgMode
 import fr.yannickuhrig.vyzo.data.db.EpgSourceEntity
+import fr.yannickuhrig.vyzo.data.epg.programsFittingGaps
 import fr.yannickuhrig.vyzo.data.db.EpisodeEntity
 import fr.yannickuhrig.vyzo.data.db.MovieEntity
 import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
@@ -725,6 +727,11 @@ class SyncManager(
         val wantedIds = refs.mapNotNull { r -> r.epgId.lowercase().trim().takeIf { it.isNotEmpty() } }.toHashSet()
         val wantedNames = refs.map { it.matchKey }.filter { it.isNotEmpty() }.toHashSet()
         val filled = HashSet<String>()
+        // Nom de chaîne → clé XMLTV retenue par une source mieux classée.
+        val coveredNames = HashMap<String, String>()
+        val idByName = refs.filter { it.epgId.isNotBlank() && it.matchKey.isNotEmpty() }
+            .associate { it.matchKey to it.epgId.lowercase().trim() }
+        val earlierSources = ArrayList<String>()
         val playlists = db.playlists().all().associateBy { it.id }
 
         for (src in db.epg().sources().filter { it.enabled }) {
@@ -735,6 +742,10 @@ class SyncManager(
             val accepted = HashSet<String>()
             val provided = HashSet<String>()
             val nameMap = HashMap<String, String>()
+            val fillsGaps = src.mode == EpgMode.GAPS
+            // Identifiant de cette source → clé d'une chaîne déjà couverte sous un autre identifiant.
+            val aliases = HashMap<String, String>()
+            val gapCandidates = HashMap<String, ArrayList<ProgramEntity>>()
             val buf = ArrayList<ProgramEntity>(BATCH)
             var count = 0
             val ua = playlists[src.playlistId]?.userAgent?.ifBlank { null } ?: s.userAgent
@@ -749,19 +760,29 @@ class SyncManager(
                             ch.names.forEach { name ->
                                 val mk = TextNorm.matchKey(name)
                                 if (mk.isNotEmpty() && mk in wantedNames) {
-                                    nameMap.putIfAbsent(mk, id); accepted += id
+                                    val owner = coveredNames[mk] ?: idByName[mk]?.takeIf { it in filled }
+                                    if (owner == null || owner == id) {
+                                        nameMap.putIfAbsent(mk, id); accepted += id
+                                    } else if (fillsGaps) {
+                                        aliases.putIfAbsent(id, owner)
+                                    }
                                 }
                             }
                         },
                         onProgramme = { pr ->
                             val id = pr.channel.lowercase().trim()
-                            if ((id in accepted || id in wantedIds) && id !in filled && pr.stop > from && pr.start < to) {
+                            val key = aliases[id] ?: id
+                            val known = id in accepted || id in wantedIds || key != id
+                            val program = ProgramEntity(
+                                channelKey = key, start = pr.start + shift, stop = pr.stop + shift, title = pr.title,
+                                description = pr.description, category = pr.category, icon = pr.icon,
+                                sourceKey = sourceKey, generation = gen,
+                            )
+                            if (known && key in filled && fillsGaps && pr.stop > from && pr.start < to) {
+                                gapCandidates.getOrPut(key) { ArrayList() } += program
+                            } else if (known && key !in filled && pr.stop > from && pr.start < to) {
                                 provided += id
-                                buf += ProgramEntity(
-                                    channelKey = id, start = pr.start + shift, stop = pr.stop + shift, title = pr.title,
-                                    description = pr.description, category = pr.category, icon = pr.icon,
-                                    sourceKey = sourceKey, generation = gen,
-                                )
+                                buf += program
                                 if (buf.size >= BATCH) {
                                     runBlocking { db.programs().insertAll(buf.toList()) }
                                     count += buf.size; buf.clear()
@@ -775,9 +796,12 @@ class SyncManager(
                 // L'analyseur rend la main sans erreur quand on annule : ne pas publier une génération incomplète.
                 ctx.ensureActive()
                 db.programs().insertAll(buf); count += buf.size
+                count += insertGapPrograms(gapCandidates, earlierSources, from, to)
                 db.programs().deleteOtherGenerations(sourceKey, gen)
                 db.epg().upsertNameMap(nameMap.map { (k, v) -> EpgNameMapEntity(k, v) })
                 filled += provided
+                nameMap.forEach { (name, id) -> if (id in provided) coveredNames.putIfAbsent(name, id) }
+                earlierSources += sourceKey
                 db.epg().updateSource(src.copy(lastSync = System.currentTimeMillis(), lastError = "", programCount = count))
             } catch (e: Exception) {
                 // Coupure, XML invalide ou annulation : retirer les lots déjà insérés, sinon ils s'ajoutent à l'ancienne
@@ -796,6 +820,21 @@ class SyncManager(
             runCatching { syncStalkerEpg(p, stalkerClient(p)) }
         }
         afterEpg?.let { runCatching { it() }.onFailure { e -> Log.w(TAG, "afterEpg", e) } }
+    }
+
+    private suspend fun insertGapPrograms(
+        candidates: Map<String, List<ProgramEntity>>,
+        earlierSources: List<String>,
+        from: Long,
+        to: Long,
+    ): Int {
+        if (candidates.isEmpty() || earlierSources.isEmpty()) return 0
+        val taken = candidates.keys.chunked(KEYS_PER_QUERY)
+            .flatMap { keys -> db.programs().slots(keys, earlierSources, from, to) }
+            .groupBy { it.channelKey }
+        val kept = candidates.flatMap { (key, programs) -> programsFittingGaps(taken[key].orEmpty(), programs) }
+        kept.chunked(BATCH).forEach { db.programs().insertAll(it) }
+        return kept.size
     }
 
     private suspend fun cleanup(pid: Long, token: Long, includeVod: Boolean) {
@@ -827,6 +866,7 @@ class SyncManager(
     companion object {
         private const val TAG = "VyzoSync"
         private const val BATCH = 500
+        private const val KEYS_PER_QUERY = 500
         const val DAY = 24 * 3600_000L
         private val yearRegex = Regex("\\((\\d{4})\\)")
 

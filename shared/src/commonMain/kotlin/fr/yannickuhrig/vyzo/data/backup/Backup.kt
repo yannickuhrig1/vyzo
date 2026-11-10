@@ -6,6 +6,7 @@ import fr.yannickuhrig.vyzo.data.db.CategoryPrefEntity
 import fr.yannickuhrig.vyzo.data.db.ChannelPrefEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.db.DEFAULT_PROFILE_NAME
+import fr.yannickuhrig.vyzo.data.db.EpgMode
 import fr.yannickuhrig.vyzo.data.db.EpgSourceEntity
 import fr.yannickuhrig.vyzo.data.db.FAVORITES_GROUP_ID
 import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
@@ -31,7 +32,10 @@ data class BackupPlaylist(
 )
 
 @Serializable
-data class BackupEpg(val name: String, val url: String, val enabled: Boolean)
+data class BackupEpg(
+    val name: String, val url: String, val enabled: Boolean,
+    val priority: Int = 0, val mode: String = EpgMode.FILL,
+)
 
 @Serializable
 data class BackupProfile(
@@ -148,9 +152,9 @@ object BackupManager {
         val local = db.profiles().all().filter { it.localOnly }.map { it.id }.toSet()
         return Backup(
             // Le profil actif, le code parental et le jeton GitHub restent propres à chaque appareil.
-            settings = c.settings.get().copy(activeProfileId = "", parentalPinHash = "", githubToken = "", lastUpdateCheck = 0, skippedVersionCode = 0, lastPlaces = emptyMap()),
+            settings = c.settings.get().copy(activeProfileId = "", parentalPinHash = "", githubToken = "", traktClientId = "", traktClientSecret = "", traktAccessToken = "", traktRefreshToken = "", traktTokenExpiresAt = 0, traktProfileId = "", traktLastSync = 0, multiViewPresets = emptyList(), lastUpdateCheck = 0, skippedVersionCode = 0, lastPlaces = emptyMap()),
             playlists = db.playlists().all().map { BackupPlaylist(it.id, it.name, it.type.name, it.url, it.username, it.password, it.mac, it.userAgent) },
-            epgSources = db.epg().sources().filter { !it.auto }.map { BackupEpg(it.name, it.url, it.enabled) },
+            epgSources = db.epg().sources().filter { !it.auto }.map { BackupEpg(it.name, it.url, it.enabled, it.priority, it.mode) },
             groups = db.groups().allGroups().filter { it.profileId !in local }.map { BackupGroup(it.id, it.name, it.position, it.profileId, it.syncId) },
             items = db.groups().allItems().filter { it.itemUid.isNotBlank() && it.profileId !in local }
                 .map { BackupItem(it.groupId, it.itemUid, it.kind.name, it.position, it.profileId) },
@@ -199,7 +203,7 @@ object BackupManager {
         db.playlists().all().forEach { c.repo.deletePlaylist(it.id) }
         // Avec leurs programmes : une source recréée change d'identifiant, le guide les afficherait en double.
         db.epg().sources().filter { !it.auto }.forEach { c.repo.deleteEpgSource(it) }
-        b.epgSources.distinctBy { it.url }.forEach { db.epg().insertSource(EpgSourceEntity(name = it.name, url = it.url, enabled = it.enabled)) }
+        b.epgSources.distinctBy { it.url }.forEach { db.epg().insertSource(EpgSourceEntity(name = it.name, url = it.url, enabled = it.enabled, priority = it.priority, mode = it.mode)) }
 
         val idMap = HashMap<Long, Long>()
         b.playlists.forEachIndexed { i, p ->
@@ -234,6 +238,14 @@ object BackupManager {
                 activeProfileId = cur.activeProfileId,
                 parentalPinHash = cur.parentalPinHash,
                 githubToken = cur.githubToken,
+                traktClientId = cur.traktClientId,
+                traktClientSecret = cur.traktClientSecret,
+                traktAccessToken = cur.traktAccessToken,
+                traktRefreshToken = cur.traktRefreshToken,
+                traktTokenExpiresAt = cur.traktTokenExpiresAt,
+                traktProfileId = cur.traktProfileId,
+                traktLastSync = cur.traktLastSync,
+                multiViewPresets = cur.multiViewPresets,
                 recFolderUri = cur.recFolderUri,
                 recFolderName = cur.recFolderName,
                 lastUpdateCheck = cur.lastUpdateCheck,
@@ -288,8 +300,8 @@ object BackupManager {
             val known = db.epg().sources().filter { !it.auto }
             b.epgSources.forEach { e ->
                 val cur = known.firstOrNull { it.url == e.url }
-                if (cur != null) db.epg().updateSource(cur.copy(name = e.name, enabled = e.enabled))
-                else db.epg().insertSource(EpgSourceEntity(name = e.name, url = e.url, enabled = e.enabled))
+                if (cur != null) db.epg().updateSource(cur.copy(name = e.name, enabled = e.enabled, priority = e.priority, mode = e.mode))
+                else db.epg().insertSource(EpgSourceEntity(name = e.name, url = e.url, enabled = e.enabled, priority = e.priority, mode = e.mode))
             }
         }
         if (BackupPart.CHANNEL_PREFS in b.parts) {
@@ -306,6 +318,14 @@ object BackupManager {
                     activeProfileId = cur.activeProfileId,
                     parentalPinHash = cur.parentalPinHash,
                     githubToken = cur.githubToken,
+                    traktClientId = cur.traktClientId,
+                    traktClientSecret = cur.traktClientSecret,
+                    traktAccessToken = cur.traktAccessToken,
+                    traktRefreshToken = cur.traktRefreshToken,
+                    traktTokenExpiresAt = cur.traktTokenExpiresAt,
+                    traktProfileId = cur.traktProfileId,
+                    traktLastSync = cur.traktLastSync,
+                    multiViewPresets = cur.multiViewPresets,
                     recFolderUri = cur.recFolderUri,
                     recFolderName = cur.recFolderName,
                     lastUpdateCheck = cur.lastUpdateCheck,

@@ -175,6 +175,37 @@ class DesktopConnexionsTest {
         assertEquals(2, v.multiViewSlots.value.size)
     }
 
+    @Test
+    fun unPrereglageOuvreSesChainesEtIgnoreLesIntertitres() = runBlocking {
+        val list = channels(maxConnections = 3)
+        val v = open(list[0])
+
+        v.openMultiViewChannels(listOf(list[2].uid, list[1].uid, list[3].uid))
+
+        assertTrue(waitUntil { v.isMultiViewActive.value && v.multiViewSlots.value.size == 2 })
+        assertEquals(listOf(list[2].uid, list[3].uid), v.multiViewSlots.value.map { it.channel.uid })
+        assertEquals("la 1re chaîne remplace celle en cours", list[2].uid, v.ui.value.channel?.uid)
+    }
+
+    @Test
+    fun unPrereglageEnregistreAppartientAuProfilActif() = runBlocking {
+        val list = channels(maxConnections = 2)
+        val v = open(list[0])
+        v.enterMultiView()
+        assertTrue(waitUntil { v.isMultiViewActive.value })
+
+        v.saveMultiViewPreset("Soirée")
+
+        assertTrue(waitUntil { c.settings.state.value.multiViewPresets.isNotEmpty() })
+        val preset = c.settings.state.value.multiViewPresets.single()
+        assertEquals("Soirée", preset.name)
+        assertEquals(c.settings.state.value.activeProfileId, preset.profileId)
+        assertEquals(v.multiViewSlots.value.map { it.channel.uid }, preset.channelUids)
+
+        v.deleteMultiViewPreset(preset)
+        assertTrue(waitUntil { c.settings.state.value.multiViewPresets.isEmpty() })
+    }
+
     /** Capture 148 du rapport : en multi-écran, le bandeau d'infos du 1er écran recouvrait toute la grille. */
     @Test
     fun multiEcranSansLeBandeauDuPremierEcran() = runBlocking {

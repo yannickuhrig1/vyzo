@@ -323,7 +323,7 @@ internal fun OnAirTile(item: OnAirItem, tv: Boolean, onFocus: (HomeItem) -> Unit
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(ch.name, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Badge("EN DIRECT", VyzoColors.Red)
+                Badge(item.score ?: "EN DIRECT", VyzoColors.Red)
             }
             Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp)) {
                 Text(

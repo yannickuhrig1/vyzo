@@ -23,6 +23,8 @@ import fr.yannickuhrig.vyzo.data.intro.SkipKind
 import fr.yannickuhrig.vyzo.data.intro.SkipSegment
 import fr.yannickuhrig.vyzo.data.intro.markersFor
 import fr.yannickuhrig.vyzo.data.prefs.AppSettings
+import fr.yannickuhrig.vyzo.data.prefs.MultiViewPreset
+import fr.yannickuhrig.vyzo.data.prefs.MultiViewPresets
 import fr.yannickuhrig.vyzo.data.repo.Repository
 import fr.yannickuhrig.vyzo.data.repo.StreamSpec
 import fr.yannickuhrig.vyzo.data.source.m3u.M3uClassifier
@@ -33,6 +35,7 @@ import fr.yannickuhrig.vyzo.player.TimeshiftBuffer
 import fr.yannickuhrig.vyzo.player.TrackOption
 import fr.yannickuhrig.vyzo.player.TrackType
 import fr.yannickuhrig.vyzo.data.prefs.SeriesTracks
+import fr.yannickuhrig.vyzo.data.trakt.TraktMedia
 import fr.yannickuhrig.vyzo.player.VideoPlayer
 import fr.yannickuhrig.vyzo.ui.common.Fmt
 import fr.yannickuhrig.vyzo.ui.common.PlayKind
@@ -272,6 +275,9 @@ class PlayerViewModel(
                 c.player.status.collect { st ->
                     if (wasPlaying && !st.isPlaying) {
                         onPlaybackPausedOrStopped()
+                        reportTraktPause()
+                    } else if (!wasPlaying && st.isPlaying) {
+                        reportTraktPlaying()
                     }
                     wasPlaying = st.isPlaying
                 }
@@ -596,6 +602,50 @@ class PlayerViewModel(
         }
     }
 
+    // ------------------------------------------------------------ Trakt
+
+    private var traktCurrent: Pair<String, TraktMedia>? = null
+    private var traktProgress = 0.0
+
+    private fun readTraktProgress(): Double {
+        val position = c.player.currentPosition
+        val length = c.player.duration
+        if (length > 0 && position >= 0) traktProgress = (position * 100.0 / length).coerceIn(0.0, 100.0)
+        return traktProgress
+    }
+
+    private suspend fun currentTraktMedia(): TraktMedia? {
+        val key = when (kind) {
+            PlayKind.MOVIE -> uid
+            PlayKind.EPISODE -> episode?.uid
+            else -> null
+        } ?: return null
+        traktCurrent?.takeIf { it.first == key }?.let { return it.second }
+        val media = when (kind) {
+            PlayKind.MOVIE -> c.db.movies().get(uid)?.let { c.trakt.movieMedia(it) }
+            else -> episode?.let { e -> c.db.series().get(e.seriesUid)?.let { c.trakt.episodeMedia(it, e) } }
+        } ?: return null
+        traktCurrent = key to media
+        return media
+    }
+
+    private fun reportTraktPlaying() {
+        if (!c.trakt.canScrobble) return
+        viewModelScope.launch {
+            val media = currentTraktMedia() ?: return@launch
+            // La recherche TMDB peut durer : la lecture a pu s'arrêter entre-temps.
+            if (c.player.status.value.isPlaying) c.trakt.onPlaying(media, readTraktProgress())
+        }
+    }
+
+    private fun reportTraktPause() {
+        if (c.trakt.canScrobble) c.trakt.onPaused(readTraktProgress())
+    }
+
+    private fun reportTraktStop() {
+        if (traktCurrent != null) c.trakt.onStopped(readTraktProgress())
+    }
+
     private fun onEpisodeEnded() {
         val dur = c.player.duration
         saveProgress(dur, dur)
@@ -863,6 +913,54 @@ class PlayerViewModel(
         }
     }
 
+    fun saveMultiViewPreset(name: String) {
+        val uids = multiViewSlots.value.map { it.channel.uid }
+        if (name.isBlank() || uids.size < 2) return
+        viewModelScope.launch {
+            c.settings.update { it.copy(multiViewPresets = MultiViewPresets.save(it.multiViewPresets, it.activeProfileId, name, uids)) }
+            message.value = "Préréglage « ${name.trim()} » enregistré"
+        }
+    }
+
+    fun deleteMultiViewPreset(preset: MultiViewPreset) {
+        viewModelScope.launch { c.settings.update { it.copy(multiViewPresets = MultiViewPresets.remove(it.multiViewPresets, preset)) } }
+    }
+
+    private suspend fun visibleChannels(uids: List<String>): List<ChannelEntity> {
+        val view = c.repo.viewScopeNow()
+        return uids.distinct().mapNotNull { c.db.channels().get(it) }.filter { ch ->
+            ch.playlistId in view.pids && !ch.hidden && !ChannelSeparator.matches(ch.name) &&
+                !(view.hide && (ch.locked || c.db.categories().isLocked(ch.categoryUid)))
+        }.take(MAX_MULTI_VIEW_SCREENS)
+    }
+
+    /** Ouvre plusieurs chaînes en multi-écran, une à une : le fournisseur bloque les rafales de connexions. */
+    fun openMultiViewChannels(uids: List<String>) {
+        viewModelScope.launch {
+            val channels = visibleChannels(uids)
+            if (channels.size < 2) {
+                message.value = "Ces chaînes ne sont plus disponibles"
+                return@launch
+            }
+            exitMultiView()
+            val first = channels.first()
+            if (ui.value.channel?.uid != first.uid) {
+                playChannel(first)
+                withTimeoutOrNull(MULTI_VIEW_START_TIMEOUT_MS) { ui.first { it.channel?.uid == first.uid } } ?: return@launch
+            }
+            delay(MULTI_VIEW_OPEN_PAUSE_MS)
+            if (!canOpenScreen(channels[1])) return@launch
+            multiViewSlots.value = listOf(MultiViewSlot(0, first, c.player, isPrimary = true), openSlot(1, channels[1], muted = true))
+            activeAudioSlot.value = 0
+            c.player.setMuted(false)
+            isMultiViewActive.value = true
+            channels.drop(2).forEach { ch ->
+                delay(MULTI_VIEW_OPEN_PAUSE_MS)
+                addMultiViewChannel(ch).join()
+            }
+        }
+    }
+
     fun addMultiViewChannel(channel: ChannelEntity) = viewModelScope.launch {
         if (multiViewSlots.value.size >= 4) return@launch
         if (ChannelSeparator.matches(channel.name)) {
@@ -950,6 +1048,7 @@ class PlayerViewModel(
         exitMultiView()
         progressSyncJob?.cancel()
         onPlaybackPausedOrStopped()
+        reportTraktStop()
         buffer.stop()
         super.onCleared()
     }
@@ -1207,6 +1306,9 @@ class PlayerViewModel(
 
 /** Nombre de séries dont on retient les pistes choisies. */
 private const val MAX_SERIES_TRACKS = 300
+private const val MAX_MULTI_VIEW_SCREENS = 4
+private const val MULTI_VIEW_START_TIMEOUT_MS = 15_000L
+private const val MULTI_VIEW_OPEN_PAUSE_MS = 1_500L
 
 /**
  * Piste qui correspond au nom retenu : même nom exact, sinon même langue (premier mot du nom, « Français », « English »…).

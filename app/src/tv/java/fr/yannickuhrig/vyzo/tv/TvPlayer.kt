@@ -106,8 +106,9 @@ private val barScrim: Brush
     get() = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f), Color.Black.copy(alpha = 0.95f)))
 
 /** Ce que les flèches font en ce moment : le bandeau ne contient aucun bouton à atteindre. */
-fun liveHint(ui: PlayerUi): String =
+fun liveHint(ui: PlayerUi, customKeys: Boolean = false): String =
     if (ui.timeshift != null || ui.isCatchupMode) "▶❚❚ : lecture/pause   ◀◀ ▶▶ : reculer/avancer   ■ ou Menu : revenir au direct   ▲▼ : zapper"
+    else if (customKeys) "OK : chaînes   0 : chaîne précédente"
     else "OK : chaînes   ▲▼ : zapper   ▶ : guide   ▶❚❚ : pause du direct   0 : chaîne précédente   Menu : options"
 
 /** « Se termine à 21:42 », null tant que la durée n'est pas connue. */
@@ -167,7 +168,7 @@ fun TvLiveBar(a: LiveBarArgs) {
                 }
             }
         }
-        Text(liveHint(ui), color = Color.White.copy(alpha = 0.55f), fontSize = ps(13), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = pd(12)))
+        Text(liveHint(ui, a.customKeys), color = Color.White.copy(alpha = 0.55f), fontSize = ps(13), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = pd(12)))
     }
 }
 

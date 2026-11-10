@@ -147,7 +147,7 @@ actual fun rememberSaveFile(mimeType: String, onResult: (String?) -> Unit): Save
 actual fun rememberVoiceSearch(onResult: (String) -> Unit): (() -> Unit)? = null
 
 @Composable
-actual fun PlayerWindowEffect(tv: Boolean) {
+actual fun PlayerWindowEffect(tv: Boolean, orientation: String) {
     DisposableEffect(Unit) {
         DesktopUi.onPlayerScreen(true)
         onDispose { DesktopUi.onPlayerScreen(false) }

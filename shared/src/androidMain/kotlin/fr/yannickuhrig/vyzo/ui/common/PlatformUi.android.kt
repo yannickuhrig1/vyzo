@@ -1,6 +1,5 @@
 package fr.yannickuhrig.vyzo.ui.common
 
-import androidx.compose.ui.Modifier
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -25,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -33,6 +33,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import fr.yannickuhrig.vyzo.data.backup.hasSharedStorageAccess
+import fr.yannickuhrig.vyzo.data.prefs.PlayerOrientation
 
 fun Context.findActivity(): Activity? {
     var c = this
@@ -143,7 +144,7 @@ actual fun rememberVoiceSearch(onResult: (String) -> Unit): (() -> Unit)? {
 }
 
 @Composable
-actual fun PlayerWindowEffect(tv: Boolean) {
+actual fun PlayerWindowEffect(tv: Boolean, orientation: String) {
     val view = LocalView.current
     val ctx = LocalContext.current
     DisposableEffect(Unit) {
@@ -154,12 +155,21 @@ actual fun PlayerWindowEffect(tv: Boolean) {
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller?.hide(WindowInsetsCompat.Type.systemBars())
         val previousOrientation = activity?.requestedOrientation
-        if (!tv) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             controller?.show(WindowInsetsCompat.Type.systemBars())
             if (!tv) activity?.requestedOrientation = previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
+    }
+    DisposableEffect(tv, orientation) {
+        if (!tv) {
+            ctx.findActivity()?.requestedOrientation = when (orientation) {
+                PlayerOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                PlayerOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+            }
+        }
+        onDispose { }
     }
 }
 

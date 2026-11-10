@@ -21,6 +21,7 @@ import fr.yannickuhrig.vyzo.schedule.ReminderScheduler
 import fr.yannickuhrig.vyzo.update.AppUpdater
 import fr.yannickuhrig.vyzo.update.UpdateInstaller
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -57,6 +58,15 @@ class AppContainer(
     val events = AppEvents()
     val pip = PipState()
     val screenIdle = fr.yannickuhrig.vyzo.ui.common.ScreenIdle()
+    val playlistChecker by lazy {
+        fr.yannickuhrig.vyzo.data.sync.PlaylistChecker(
+            scope = scope,
+            channels = { repo.channels(it).first() },
+            resolve = { repo.resolveChannel(it) },
+            isPlaying = { player.current.value != null },
+            isConnectionBusy = { db.recordings().inProgress().isNotEmpty() || downloads.observeAll().first().any { it.isDownloading } },
+        )
+    }
     val sleepTimer by lazy {
         fr.yannickuhrig.vyzo.player.SleepTimer(scope, onExpire = { scope.launch(kotlinx.coroutines.Dispatchers.Main) { player.stop() } })
     }
@@ -64,6 +74,10 @@ class AppContainer(
     private val metadataCache = fr.yannickuhrig.vyzo.data.tmdb.MetadataCache(db.metadataCache())
     val tmdb = fr.yannickuhrig.vyzo.data.tmdb.TmdbService(settings, metadataCache, platform.tmdbBuiltInKey)
     val omdb = fr.yannickuhrig.vyzo.data.ratings.OmdbClient(settings, metadataCache)
+    val espn = fr.yannickuhrig.vyzo.data.sport.EspnScores()
+    val trakt by lazy { fr.yannickuhrig.vyzo.data.trakt.TraktManager(settings, repo, db, tmdb, scope) }
+    /** Chaînes à ouvrir en multi-écran dès que le lecteur démarre (« Mes matchs »). */
+    val pendingMultiView = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     val introDb = fr.yannickuhrig.vyzo.data.intro.IntroDbClient()
     val tvMaze = fr.yannickuhrig.vyzo.data.intro.TvMazeClient()
     val weather = fr.yannickuhrig.vyzo.data.weather.WeatherService()
@@ -105,6 +119,7 @@ class AppContainer(
         downloads.start()
         scope.launch { runCatching { parental.refreshAdultFlags() } }
         scope.launch { runCatching { metadataCache.purge() } }
+        scope.launch { runCatching { trakt.syncIfDue() } }
         scope.launch {
             settings.flow.map { it.diagnosticLog }.distinctUntilChanged().collect { DiagLog.enabled = it }
         }
@@ -119,6 +134,8 @@ class AppContainer(
     /** L'appli passe en arrière-plan, ou Vyzo PC est réduit dans la zone de notification. */
     fun onBackground() {
         parental.onBackground()
+        // Sur téléviseur ou mobile, le système peut couper le réseau à tout moment : les résultats seraient faux.
+        if (!platform.isDesktop) playlistChecker.stop(fr.yannickuhrig.vyzo.data.sync.CheckOutcome.BACKGROUND)
         // Vyzo PC réduit dans la zone de notification reste joignable : c'est lui qui enregistre.
         cloud.onBackground(stayConnected = platform.isDesktop)
     }

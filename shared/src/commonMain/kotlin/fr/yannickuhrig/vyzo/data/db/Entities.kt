@@ -242,7 +242,20 @@ data class EpgSourceEntity(
     val lastSync: Long = 0,
     val lastError: String = "",
     val programCount: Int = 0,
+    /** Rang de la source : la plus petite valeur passe en premier. */
+    val priority: Int = 0,
+    /** Voir [EpgMode]. */
+    val mode: String = EpgMode.FILL,
 )
+
+/** Ce qu'une source apporte aux chaînes déjà couvertes par une source mieux classée. */
+object EpgMode {
+    /** Rien : elle ne sert que pour les chaînes encore sans guide. */
+    const val FILL = "FILL"
+
+    /** Ses programmes s'ajoutent dans les créneaux restés vides. */
+    const val GAPS = "GAPS"
+}
 
 /** Correspondance nom de chaîne normalisé → identifiant XMLTV, pour les chaînes sans tvg-id. */
 @Entity(tableName = "epg_name_map")

@@ -12,6 +12,8 @@ class LiveBarArgs(
     val showNumbers: Boolean,
     val positionMs: Long,
     val delayMs: Long,
+    /** Touches personnalisées : le bandeau ne décrit plus les flèches. */
+    val customKeys: Boolean = false,
 )
 
 class VodBarArgs(

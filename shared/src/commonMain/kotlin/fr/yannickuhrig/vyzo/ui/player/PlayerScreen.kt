@@ -1,12 +1,5 @@
 package fr.yannickuhrig.vyzo.ui.player
 
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.onFocusChanged
-import fr.yannickuhrig.vyzo.ui.common.hideCursor
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.geometry.isSpecified
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,8 +7,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -30,53 +23,61 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CalendarViewDay
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.PictureInPicture
-import androidx.compose.material.icons.filled.PictureInPictureAlt
-import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.outlined.PushPin
-import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -85,8 +86,8 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -95,14 +96,19 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -111,66 +117,85 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import fr.yannickuhrig.vyzo.player.StreamInfo
-import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.runtime.produceState
-import fr.yannickuhrig.vyzo.player.AUDIO_DELAY_CHOICES
-import fr.yannickuhrig.vyzo.player.PlaybackState
-import fr.yannickuhrig.vyzo.player.PlaybackStats
-import fr.yannickuhrig.vyzo.player.SLEEP_TIMER_MINUTES
-import fr.yannickuhrig.vyzo.player.SleepTimer
-import fr.yannickuhrig.vyzo.player.audioDelayLabel
-import fr.yannickuhrig.vyzo.player.ResizeMode
-import fr.yannickuhrig.vyzo.player.TrackOption
-import fr.yannickuhrig.vyzo.player.TrackType
-import fr.yannickuhrig.vyzo.ui.common.PlatformBackHandler
-import fr.yannickuhrig.vyzo.ui.common.PlayerWindowEffect
-import fr.yannickuhrig.vyzo.ui.common.isDesktop
-import fr.yannickuhrig.vyzo.ui.common.repeatCount
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ProgramEntity
 import fr.yannickuhrig.vyzo.data.intro.SkipKind
-import fr.yannickuhrig.vyzo.ui.common.Badge
-import fr.yannickuhrig.vyzo.ui.common.ProgramMenu
-import fr.yannickuhrig.vyzo.ui.common.Tile
+import fr.yannickuhrig.vyzo.data.prefs.MultiViewPreset
+import fr.yannickuhrig.vyzo.data.prefs.MultiViewPresets
+import fr.yannickuhrig.vyzo.data.prefs.PlayerOrientation
+import fr.yannickuhrig.vyzo.data.subtitles.SrtParser
+import fr.yannickuhrig.vyzo.player.AUDIO_DELAY_CHOICES
+import fr.yannickuhrig.vyzo.player.PlaybackState
+import fr.yannickuhrig.vyzo.player.PlaybackStats
+import fr.yannickuhrig.vyzo.player.ResizeMode
+import fr.yannickuhrig.vyzo.player.SLEEP_TIMER_MINUTES
+import fr.yannickuhrig.vyzo.player.SleepTimer
+import fr.yannickuhrig.vyzo.player.StreamInfo
+import fr.yannickuhrig.vyzo.player.TrackOption
+import fr.yannickuhrig.vyzo.player.TrackType
+import fr.yannickuhrig.vyzo.player.audioDelayLabel
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
 import fr.yannickuhrig.vyzo.ui.common.ActionItem
+import fr.yannickuhrig.vyzo.ui.common.Badge
 import fr.yannickuhrig.vyzo.ui.common.CastDialog
 import fr.yannickuhrig.vyzo.ui.common.Choice
 import fr.yannickuhrig.vyzo.ui.common.ChoiceDialog
 import fr.yannickuhrig.vyzo.ui.common.Fmt
 import fr.yannickuhrig.vyzo.ui.common.LocalContainer
-import fr.yannickuhrig.vyzo.data.subtitles.SrtParser
 import fr.yannickuhrig.vyzo.ui.common.NetImage
+import fr.yannickuhrig.vyzo.ui.common.PlatformBackHandler
 import fr.yannickuhrig.vyzo.ui.common.PlayKind
+import fr.yannickuhrig.vyzo.ui.common.PlayerWindowEffect
+import fr.yannickuhrig.vyzo.ui.common.ProgramMenu
 import fr.yannickuhrig.vyzo.ui.common.ProgressLine
+import fr.yannickuhrig.vyzo.ui.common.TextInputDialog
+import fr.yannickuhrig.vyzo.ui.common.Tile
 import fr.yannickuhrig.vyzo.ui.common.VideoSurface
 import fr.yannickuhrig.vyzo.ui.common.appViewModel
+import fr.yannickuhrig.vyzo.ui.common.hideCursor
+import fr.yannickuhrig.vyzo.ui.common.isDesktop
 import fr.yannickuhrig.vyzo.ui.common.isTv
+import fr.yannickuhrig.vyzo.ui.common.repeatCount
 import fr.yannickuhrig.vyzo.ui.live.ChannelRow
 import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 private val resizeModes = ResizeMode.entries
+
+/** Largeur sous laquelle les commandes du lecteur doivent se resserrer : un téléphone en portrait. */
+private val NARROW_WINDOW = 480.dp
+
+/** Encoche de l'écran : en portrait, elle se trouve au-dessus des commandes. */
+private val topCutout: WindowInsets
+    @Composable get() = WindowInsets.displayCutout.only(WindowInsetsSides.Top)
+
+@Composable
+private fun isNarrowWindow(): Boolean =
+    with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() } < NARROW_WINDOW
 
 /** Sur PC, les boutons du lecteur se cliquent à la souris sans prendre le focus : les raccourcis clavier restent actifs. */
 private val noFocus: Modifier
@@ -213,6 +238,7 @@ fun PlayerScreen(
     val playerError by c.player.error.collectAsState()
     val player = c.player
     val settings by c.settings.state.collectAsState()
+    val settingsScope = rememberCoroutineScope()
     val desktop = isDesktop()
     val windowControls = c.platform.window
     val fullscreen by (windowControls?.fullscreen ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsState()
@@ -234,6 +260,9 @@ fun PlayerScreen(
     var optionsVisible by remember { mutableStateOf(false) }
     // Second niveau du menu : réglages techniques peu utilisés (qualité, format, flux, cast, multi-écran).
     var moreOptionsVisible by remember { mutableStateOf(false) }
+    var presetsMenuVisible by remember { mutableStateOf(false) }
+    var presetMenu by remember { mutableStateOf<MultiViewPreset?>(null) }
+    var presetNameDialog by remember { mutableStateOf(false) }
     var statsVisible by remember { mutableStateOf(false) }
     var audioDelayMenuVisible by remember { mutableStateOf(false) }
     var sleepMenuVisible by remember { mutableStateOf(false) }
@@ -430,8 +459,8 @@ fun PlayerScreen(
         onDispose { c.pip.setScreenActive(false) }
     }
 
-    // --- Fenêtre : plein écran, écran allumé, paysage sur téléphone
-    PlayerWindowEffect(tv)
+    // --- Fenêtre : plein écran, écran allumé, orientation choisie sur téléphone
+    PlayerWindowEffect(tv, settings.playerOrientation)
 
     // --- Cycle de vie : on coupe le direct en arrière-plan, on le relance au retour
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -530,6 +559,39 @@ fun PlayerScreen(
         return ch
     }
 
+    val pendingMultiView by c.pendingMultiView.collectAsState()
+    LaunchedEffect(pendingMultiView, ui.channel?.uid) {
+        if (pendingMultiView.isNotEmpty() && ui.channel != null) {
+            val uids = pendingMultiView
+            c.pendingMultiView.value = emptyList()
+            vm.openMultiViewChannels(uids)
+        }
+    }
+
+    // Touche à double usage (appui court ou maintenu) : l'action courte attend le relâchement.
+    var armedButton by remember { mutableStateOf<RemoteButton?>(null) }
+
+    fun runRemoteAction(action: RemoteAction): Boolean {
+        when (action) {
+            RemoteAction.NONE -> return false
+            RemoteAction.ZAP_UP -> zap(1)
+            RemoteAction.ZAP_DOWN -> zap(-1)
+            RemoteAction.CHANNEL_LIST -> listVisible = true
+            RemoteAction.GUIDE -> guideVisible = true
+            RemoteAction.BANNER -> showOverlay()
+            // ▶ une fois : infos ; ▶ encore (bandeau affiché) : mini-guide.
+            RemoteAction.BANNER_THEN_GUIDE -> if (overlay) guideVisible = true else showOverlay()
+            RemoteAction.OPTIONS -> optionsVisible = true
+            RemoteAction.STREAM_INFO -> { statsVisible = !statsVisible; showOverlay() }
+            RemoteAction.PLAY_PAUSE -> { vm.toggleLivePause(); showOverlay() }
+            RemoteAction.PREVIOUS_CHANNEL -> {
+                if (!vm.playPrevious()) vm.message.value = "Pas encore de chaîne précédente"
+                showOverlay()
+            }
+        }
+        return true
+    }
+
     val keyHandler: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = handler@{ ev ->
         val isOk = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
         if (listVisible || optionsVisible || moreOptionsVisible || trackType != null || guideVisible || slotForMenu != null) return@handler false
@@ -561,6 +623,11 @@ fun PlayerScreen(
                     else -> togglePlay()
                 }
                 return@handler true
+            }
+            val armed = armedButton
+            if (armed != null && remoteButtonOf(ev.key) == armed) {
+                armedButton = null
+                return@handler runRemoteAction(RemoteKeymap.action(settings.remoteBindings, armed))
             }
             return@handler false
         }
@@ -603,16 +670,25 @@ fun PlayerScreen(
         }
         if (ui.isLive) {
             val shifted = ui.timeshift?.started == true
+            val button = remoteButtonOf(ev.key)
+            if (button != null) {
+                val bindings = settings.remoteBindings
+                val held = button.held?.let { RemoteKeymap.action(bindings, it) } ?: RemoteAction.NONE
+                if (held != RemoteAction.NONE) {
+                    if (repeat == 0) armedButton = button
+                    else if (armedButton == button) {
+                        armedButton = null
+                        runRemoteAction(held)
+                    }
+                    return@handler true
+                }
+                val isArrow = ev.key == Key.DirectionUp || ev.key == Key.DirectionDown || ev.key == Key.DirectionLeft || ev.key == Key.DirectionRight
+                // Une flèche sans action reste consommée : le focus ne doit pas partir dans le bandeau.
+                return@handler runRemoteAction(RemoteKeymap.action(bindings, button)) || isArrow
+            }
             when (ev.key) {
-                Key.DirectionUp, Key.ChannelUp -> { zap(1); true }
-                Key.DirectionDown, Key.ChannelDown -> { zap(-1); true }
-                Key.DirectionLeft -> { listVisible = true; true }
-                // ▶ une fois : infos ; ▶ encore (bandeau affiché) : mini-guide.
-                Key.DirectionRight -> { if (overlay) guideVisible = true else showOverlay(); true }
-                Key.Info -> { statsVisible = !statsVisible; showOverlay(); true }
-                Key.Guide -> { guideVisible = true; true }
-                Key.Menu -> { optionsVisible = true; true }
-                Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { vm.toggleLivePause(); showOverlay(); true }
+                Key.ChannelUp -> { zap(1); true }
+                Key.ChannelDown -> { zap(-1); true }
                 Key.MediaRewind -> { if (shifted) seekBy(-step); shifted }
                 Key.MediaFastForward -> { if (shifted) seekBy(step); shifted }
                 Key.MediaStop -> { if (ui.timeshift != null || ui.isCatchupMode) { vm.backToLive(); true } else false }
@@ -794,7 +870,7 @@ fun PlayerScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             if (variant != null) {
-                if (ui.isLive) variant.liveBar(LiveBarArgs(ui, clock, settings.showNumbers, position, vm.timeshiftDelay(position, clock)))
+                if (ui.isLive) variant.liveBar(LiveBarArgs(ui, clock, settings.showNumbers, position, vm.timeshiftDelay(position, clock), customKeys = !RemoteKeymap.isDefault(settings.remoteBindings)))
                 else variant.vodBar(VodBarArgs(ui, pendingSeek ?: position, duration, isPlaying))
             } else if (ui.isLive) LiveInfoBar(
                 ui = ui, clock = clock, showNumbers = settings.showNumbers, tv = tv, desktop = desktop,
@@ -802,6 +878,7 @@ fun PlayerScreen(
                 onPrevious = { if (!vm.playPrevious()) vm.message.value = "Pas encore de chaîne précédente"; showOverlay() },
                 onTogglePause = { vm.toggleLivePause(); showOverlay() },
                 onGuide = { guideVisible = true },
+                customKeys = !RemoteKeymap.isDefault(settings.remoteBindings),
                 onLive = { vm.backToLive(); showOverlay() },
                 onRestart = if (showRestartPrompt) {
                     { restartBannerDismissed = true; vm.restartCurrentProgramFromBeginning(); showOverlay() }
@@ -1067,6 +1144,13 @@ fun PlayerScreen(
                 resizeIndex = (resizeIndex + 1) % resizeModes.size
                 vm.message.value = "Format : ${resizeModes[resizeIndex].label}"
             })
+            if (!tv && !desktop) {
+                add(ActionItem("Orientation de l'écran", Icons.Default.ScreenRotation, detail = PlayerOrientation.label(settings.playerOrientation)) {
+                    val next = PlayerOrientation.next(settings.playerOrientation)
+                    settingsScope.launch { c.settings.update { it.copy(playerOrientation = next) } }
+                    vm.message.value = "Orientation : ${PlayerOrientation.label(next)}"
+                })
+            }
             add(ActionItem("Caster sur un écran", Icons.Default.Cast) {
                 castDialogVisible = true
             })
@@ -1074,6 +1158,9 @@ fun PlayerScreen(
                 add(ActionItem("Multi-écran", Icons.Default.GridView, detail = "Plusieurs chaînes à la fois") {
                     vm.enterMultiView()
                 })
+            }
+            if (ui.isLive && (isMultiView || MultiViewPresets.forProfile(settings.multiViewPresets, settings.activeProfileId).isNotEmpty())) {
+                add(ActionItem("Préréglages multi-écran", Icons.Default.GridView) { presetsMenuVisible = true })
             }
             if (c.player.capabilities.audioDelay) {
                 add(ActionItem("Décalage audio", Icons.Default.GraphicEq, detail = audioDelayLabel(audioDelayMs)) {
@@ -1094,6 +1181,29 @@ fun PlayerScreen(
             })
         }
         PlayerMenu(variant, ui.title, "Plus d'options", actions) { moreOptionsVisible = false }
+    }
+    if (presetsMenuVisible) {
+        val actions = buildList {
+            if (isMultiView) add(ActionItem("Enregistrer cet affichage", Icons.Default.Save, detail = "${multiViewSlots.size} écrans") { presetNameDialog = true })
+            MultiViewPresets.forProfile(settings.multiViewPresets, settings.activeProfileId).forEach { preset ->
+                add(ActionItem(preset.name, Icons.Default.GridView, detail = "${preset.channelUids.size} écrans") { presetMenu = preset })
+            }
+        }
+        PlayerMenu(variant, "Préréglages multi-écran", "Propres à ce profil", actions) { presetsMenuVisible = false }
+    }
+    presetMenu?.let { preset ->
+        PlayerMenu(
+            variant, preset.name, "${preset.channelUids.size} écrans",
+            listOf(
+                ActionItem("Ouvrir", Icons.Default.GridView) { vm.openMultiViewChannels(preset.channelUids) },
+                ActionItem("Supprimer", Icons.Default.Delete) { vm.deleteMultiViewPreset(preset) },
+            ),
+        ) { presetMenu = null }
+    }
+    if (presetNameDialog) {
+        TextInputDialog(
+            "Nom du préréglage", label = "Nom", onConfirm = { vm.saveMultiViewPreset(it) }, onDismiss = { presetNameDialog = false },
+        )
     }
     if (audioDelayMenuVisible) {
         PlayerPickerMenu(
@@ -1304,6 +1414,7 @@ private fun LiveInfoBar(
     positionMs: Long,
     delayMs: Long,
     canPause: Boolean,
+    customKeys: Boolean,
     onPrevious: () -> Unit,
     onTogglePause: () -> Unit,
     onGuide: () -> Unit,
@@ -1316,6 +1427,27 @@ private fun LiveInfoBar(
     // Tactile : un bandeau resserré qui laisse voir l'image. Les infos du flux, le multi-écran et le cast sont déjà
     // dans la barre du haut ; il ne garde que les boutons du direct, à droite des infos.
     val compact = !tv
+    // En portrait, ces boutons ne laisseraient presque plus de place au titre de l'émission.
+    val buttonsBelow = compact && isNarrowWindow()
+    val liveButtons: @Composable () -> Unit = {
+        IconButton(onClick = onPrevious, enabled = ui.previous != null) {
+            Icon(Icons.Default.SwapHoriz, "Chaîne précédente", tint = if (ui.previous != null) Color.White else Color.White.copy(alpha = 0.3f))
+        }
+        if (canPause || ts != null) {
+            IconButton(onClick = onTogglePause) {
+                Icon(
+                    if (ts == null || !ts.paused) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    if (ts?.paused == true) "Reprendre" else "Mettre en pause", tint = Color.White, modifier = Modifier.size(32.dp),
+                )
+            }
+        }
+        IconButton(onClick = onGuide) { Icon(Icons.Default.CalendarViewDay, "Guide de la chaîne", tint = Color.White) }
+        if (ts != null || ui.isCatchupMode) {
+            OutlinedButton(onClick = onLive, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                Text("🔴 Direct", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
     Column(
         Modifier.fillMaxWidth()
             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f), Color.Black.copy(alpha = 0.95f))))
@@ -1403,26 +1535,13 @@ private fun LiveInfoBar(
                     )
                 }
             }
-            if (compact) {
+            if (compact && !buttonsBelow) {
                 Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onPrevious, enabled = ui.previous != null) {
-                    Icon(Icons.Default.SwapHoriz, "Chaîne précédente", tint = if (ui.previous != null) Color.White else Color.White.copy(alpha = 0.3f))
-                }
-                if (canPause || ts != null) {
-                    IconButton(onClick = onTogglePause) {
-                        Icon(
-                            if (ts == null || !ts.paused) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            if (ts?.paused == true) "Reprendre" else "Mettre en pause", tint = Color.White, modifier = Modifier.size(32.dp),
-                        )
-                    }
-                }
-                IconButton(onClick = onGuide) { Icon(Icons.Default.CalendarViewDay, "Guide de la chaîne", tint = Color.White) }
-                if (ts != null || ui.isCatchupMode) {
-                    OutlinedButton(onClick = onLive, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        Text("🔴 Direct", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
+                liveButtons()
             }
+        }
+        if (buttonsBelow) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) { liveButtons() }
         }
         if (tv) {
             Text(
@@ -1430,6 +1549,7 @@ private fun LiveInfoBar(
                     desktop && (ts != null || ui.isCatchupMode) -> "Espace : lecture/pause   ◀ ▶ : reculer/avancer   Échap : revenir au direct   ▲▼ : zapper"
                     desktop -> "Entrée : chaînes   ▲▼ : zapper   ▶ : guide   Espace : pause du direct   0 : chaîne précédente   F : plein écran   P : mini-lecteur"
                     ts != null || ui.isCatchupMode -> "▶❚❚ : lecture/pause   ◀◀ ▶▶ : reculer/avancer   ■ ou Menu : revenir au direct   ▲▼ : zapper"
+                    customKeys -> "OK : chaînes   0 : chaîne précédente"
                     else -> "OK : chaînes   ▲▼ : zapper   ▶ : guide   ▶❚❚ : pause du direct   0 : chaîne précédente   Menu : options"
                 },
                 style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(top = 14.dp),
@@ -1569,9 +1689,12 @@ private fun PhoneTopBar(
     onAlwaysOnTop: (() -> Unit)? = null,
     isAlwaysOnTop: Boolean = false,
 ) {
+    // En portrait, tous les boutons ne tiennent pas : l'infos, le cast et le multi-écran restent dans les options.
+    val narrow = isNarrowWindow()
     Row(
         Modifier.fillMaxWidth()
             .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
+            .windowInsetsPadding(topCutout)
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1586,17 +1709,19 @@ private fun PhoneTopBar(
                 IconButton(onClick = onFavorite, modifier = noFocus) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, "Favori", tint = if (isFav) VyzoColors.Amber else Color.White) }
             }
             IconButton(onClick = onList, modifier = noFocus) { Icon(Icons.AutoMirrored.Filled.List, "Chaînes", tint = Color.White) }
-            if (onToggleMultiView != null) {
+            if (onToggleMultiView != null && (!narrow || isMultiView)) {
                 IconButton(onClick = onToggleMultiView, modifier = noFocus) {
                     Icon(Icons.Default.GridView, "Multi-écran", tint = if (isMultiView) VyzoColors.Cyan else Color.White)
                 }
             }
         }
-        IconButton(onClick = onToggleStats, modifier = noFocus) {
-            Icon(Icons.Default.Info, "Informations du flux", tint = if (statsVisible) VyzoColors.Cyan else Color.White)
-        }
-        IconButton(onClick = onCast, modifier = noFocus) {
-            Icon(Icons.Default.Cast, "Caster", tint = Color.White)
+        if (!narrow) {
+            IconButton(onClick = onToggleStats, modifier = noFocus) {
+                Icon(Icons.Default.Info, "Informations du flux", tint = if (statsVisible) VyzoColors.Cyan else Color.White)
+            }
+            IconButton(onClick = onCast, modifier = noFocus) {
+                Icon(Icons.Default.Cast, "Caster", tint = Color.White)
+            }
         }
         if (onAlwaysOnTop != null) {
             IconButton(onClick = onAlwaysOnTop, modifier = noFocus) {
@@ -1646,6 +1771,7 @@ private fun ChannelListPanel(
     Column(
         Modifier.fillMaxHeight().width(if (tv) 420.dp else 320.dp)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
+            .windowInsetsPadding(topCutout)
             .padding(top = 16.dp, start = 10.dp, end = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1710,6 +1836,7 @@ private fun MiniGuidePanel(
     Column(
         Modifier.fillMaxHeight().width(if (tv) 460.dp else 340.dp)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
+            .windowInsetsPadding(topCutout)
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {

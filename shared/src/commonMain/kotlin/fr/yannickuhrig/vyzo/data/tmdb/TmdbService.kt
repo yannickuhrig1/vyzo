@@ -370,6 +370,14 @@ class TmdbService(
         }
     }
 
+    /** Titre français de [id] : les listes Trakt sont en anglais, les catalogues IPTV souvent en français. */
+    suspend fun titleById(kind: TmdbKind, id: Int): TmdbTitle? = withContext(Dispatchers.IO) {
+        val apiKey = apiKey()
+        if (apiKey.isBlank()) return@withContext null
+        getJson("/${kind.path}/$id", "language=fr-FR", apiKey)
+            ?.let { parseTitleList(JsonObject(mapOf("results" to kotlinx.serialization.json.JsonArray(listOf(it))))) }?.firstOrNull()
+    }
+
     /** Titres recommandés par TMDB à partir de [id]. */
     suspend fun recommendations(kind: TmdbKind, id: Int): List<TmdbTitle> = withContext(Dispatchers.IO) {
         val apiKey = apiKey()

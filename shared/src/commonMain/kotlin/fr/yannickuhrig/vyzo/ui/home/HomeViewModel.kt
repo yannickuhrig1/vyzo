@@ -11,7 +11,10 @@ import fr.yannickuhrig.vyzo.data.db.SeriesEntity
 import fr.yannickuhrig.vyzo.data.home.HomeRows
 import fr.yannickuhrig.vyzo.data.tmdb.TmdbKind
 import fr.yannickuhrig.vyzo.data.repo.Repository
+import fr.yannickuhrig.vyzo.data.sport.EspnGame
 import fr.yannickuhrig.vyzo.data.sport.SportLineup
+import fr.yannickuhrig.vyzo.data.sport.matchScores
+import fr.yannickuhrig.vyzo.data.trakt.TraktList
 import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.ui.sport.toOnAir
 import fr.yannickuhrig.vyzo.data.weather.Weather
@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -72,6 +76,8 @@ data class OnAirItem(
     val group: String,
     /** Nombre d'autres chaînes qui diffusent le même programme (un match sur plusieurs chaînes). */
     val alsoOn: Int = 0,
+    /** Score du match, s'il est connu. */
+    val score: String? = null,
 ) : HomeItem {
     override val key get() = "air:${channel.uid}"
 }
@@ -115,6 +121,11 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private fun trendingSeries(): Flow<List<HomeItem>> =
         combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.tmdb.trending(TmdbKind.SERIES)) }, quality) { l, q -> l.map { it.toItem(q) } }
 
+    private fun traktMovies(list: TraktList): Flow<List<HomeItem>> =
+        combine(c.repo.viewScope.mapLatest { c.repo.moviesMatching(c.trakt.titles(list)) }, quality) { l, q -> l.map { it.toItem(q) } }
+    private fun traktSeries(list: TraktList): Flow<List<HomeItem>> =
+        combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.trakt.titles(list)) }, quality) { l, q -> l.map { it.toItem(q) } }
+
     private fun Flow<List<HomeItem>>.withProgress(): Flow<List<HomeItem>> =
         combine(c.repo.resumeFractions()) { items, done ->
             items.map { if (it is VodItem) it.copy(progress = done[it.uid] ?: 0f) else it }
@@ -147,8 +158,13 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     /** « Sport en direct » : un match par carte, sur la première chaîne qui le diffuse. */
     private fun sportLive(): Flow<List<HomeItem>> =
         combine(c.repo.sportChannels(), tickerFlow(60_000)) { chs, t -> chs to t }
-            .mapLatest { (chs, t) ->
-                SportLineup.live(c.repo.sportEvents(chs, t, t + 1), t).take(ON_AIR_MAX).map { it.toOnAir() }
+            .transformLatest { (chs, t) ->
+                val live = SportLineup.live(c.repo.sportEvents(chs, t, t + 1), t).take(ON_AIR_MAX)
+                fun withScores(games: List<EspnGame>): List<HomeItem> = matchScores(live, games).let { scores -> live.map { it.toOnAir(scores[it.key]) } }
+                // La rangée s'affiche tout de suite, avec les derniers scores connus.
+                val enabled = c.settings.get().sportScores
+                emit(withScores(if (enabled) c.espn.known() else emptyList()))
+                if (live.isNotEmpty() && enabled) emit(withScores(c.espn.games()))
             }
 
     private fun rowFlow(id: String): Flow<List<HomeItem>> = when {
@@ -164,6 +180,10 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         id == HomeRows.TOP_SERIES -> series(Repository.KEY_TOP_RATED)
         id == HomeRows.TRENDING_MOVIES -> trendingMovies()
         id == HomeRows.TRENDING_SERIES -> trendingSeries()
+        id == HomeRows.TRAKT_WATCHLIST_MOVIES -> traktMovies(TraktList.WATCHLIST_MOVIES)
+        id == HomeRows.TRAKT_WATCHLIST_SERIES -> traktSeries(TraktList.WATCHLIST_SHOWS)
+        id == HomeRows.TRAKT_RECO_MOVIES -> traktMovies(TraktList.RECOMMENDED_MOVIES)
+        id == HomeRows.TRAKT_RECO_SERIES -> traktSeries(TraktList.RECOMMENDED_SHOWS)
         id == HomeRows.FAV_MOVIES -> movies(Repository.KEY_FAVORITES)
         id == HomeRows.FAV_SERIES -> series(Repository.KEY_FAVORITES)
         id == HomeRows.APPS -> apps.map { l -> l.map { AppItem(it) } }

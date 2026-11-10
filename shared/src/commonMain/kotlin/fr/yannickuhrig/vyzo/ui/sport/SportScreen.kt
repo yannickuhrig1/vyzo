@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,8 +39,10 @@ import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ProgramEntity
 import fr.yannickuhrig.vyzo.data.repo.Repository
+import fr.yannickuhrig.vyzo.data.sport.MatchScore
 import fr.yannickuhrig.vyzo.data.sport.SportEvent
 import fr.yannickuhrig.vyzo.data.sport.SportLineup
+import fr.yannickuhrig.vyzo.data.sport.matchScores
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
 import fr.yannickuhrig.vyzo.ui.common.ActionItem
 import fr.yannickuhrig.vyzo.ui.common.Badge
@@ -57,43 +60,73 @@ import fr.yannickuhrig.vyzo.ui.home.OnAirTile
 import fr.yannickuhrig.vyzo.ui.live.tickerFlow
 import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.flow.update
 
 data class SportState(
     val live: List<SportEvent>,
     val upcoming: List<SportEvent>,
     val channels: List<ChannelItem>,
+    /** Scores connus des matchs en direct, par clé d'événement. */
+    val scores: Map<String, MatchScore> = emptyMap(),
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SportViewModel(private val c: AppContainer) : ViewModel() {
     /** null pendant le premier chargement. Rafraîchi chaque minute. */
     val state: StateFlow<SportState?> = combine(c.repo.sportChannels(), tickerFlow(60_000)) { chs, t -> chs to t }
-        .mapLatest { (chs, now) ->
+        .transformLatest { (chs, now) ->
             val events = c.repo.sportEvents(chs, now, now + AHEAD_MS)
             val nowMap = c.repo.nowPrograms(chs.map { it.epgKey }, now)
-            SportState(
+            val base = SportState(
                 live = SportLineup.live(events, now),
                 upcoming = SportLineup.upcoming(events, now, now + AHEAD_MS).take(MAX_UPCOMING),
                 channels = chs.take(MAX_CHANNELS).map { ChannelItem(it, nowMap[it.epgKey], Repository.KEY_ALL) },
             )
+            // L'écran s'affiche tout de suite avec les derniers scores connus, puis se met à jour.
+            val enabled = c.settings.get().sportScores
+            emit(if (enabled) base.copy(scores = matchScores(base.live, c.espn.known())) else base)
+            if (base.live.isNotEmpty() && enabled) emit(base.copy(scores = matchScores(base.live, c.espn.games())))
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val selected = MutableStateFlow<Set<String>>(emptySet())
+    /** Matchs en cours que l'utilisateur veut regarder ensemble. */
+    val myMatches: StateFlow<Set<String>> = selected
+
+    fun toggleMyMatch(e: SportEvent) {
+        selected.update { if (e.key in it) it - e.key else it + e.key }
+    }
+
+    /** Une chaîne par match choisi encore en cours. */
+    fun myChannels(live: List<SportEvent>): List<ChannelEntity> =
+        live.filter { it.key in selected.value }.map { it.channels.first() }.distinctBy { it.uid }.take(MAX_MY_MATCHES)
+
+    /** Prépare le multi-écran et renvoie la chaîne à ouvrir en premier. */
+    fun watchMyMatches(live: List<SportEvent>): ChannelEntity? {
+        val channels = myChannels(live)
+        if (channels.size < 2) return null
+        c.pendingMultiView.value = channels.map { it.uid }
+        return channels.first()
+    }
 
     companion object {
         /** Aujourd'hui et demain. */
         const val AHEAD_MS = 36 * 3_600_000L
         private const val MAX_UPCOMING = 80
         private const val MAX_CHANNELS = 200
+        private const val MAX_MY_MATCHES = 4
     }
 }
 
 /** Un événement en direct vu comme une carte « À l'antenne » (première chaîne qui le diffuse). */
-fun SportEvent.toOnAir(): OnAirItem = OnAirItem(channels.first(), program, null, Repository.KEY_ALL, alsoOn = channels.size - 1)
+fun SportEvent.toOnAir(score: MatchScore? = null): OnAirItem =
+    OnAirItem(channels.first(), program, null, Repository.KEY_ALL, alsoOn = channels.size - 1, score = score?.label)
 
 /**
  * Espace sport : matchs en direct, matchs à venir (aujourd'hui et demain) et chaînes de sport.
@@ -107,6 +140,7 @@ fun SportScreen(
     val vm = appViewModel { SportViewModel(it) }
     val tv = isTv()
     val state by vm.state.collectAsState()
+    val myMatches by vm.myMatches.collectAsState()
     var chooser by remember { mutableStateOf<SportEvent?>(null) }
     var programMenu by remember { mutableStateOf<Pair<ChannelEntity, ProgramEntity>?>(null) }
     val side = if (tv) 32.dp else 16.dp
@@ -137,13 +171,25 @@ fun SportScreen(
                         LazyRow(contentPadding = PaddingValues(horizontal = side - 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(s.live, key = { it.key }) { e ->
                                 OnAirTile(
-                                    e.toOnAir(), tv, onFocus = {},
+                                    e.toOnAir(s.scores[e.key]), tv, onFocus = {},
                                     onClick = { if (e.channels.size > 1) chooser = e else onWatch(e.channels.first()) },
                                     onLongClick = { chooser = e },
                                 )
                             }
                         }
                     }
+                }
+            }
+            if (vm.myChannels(s.live).size >= 2 && myMatches.isNotEmpty()) item(key = "mine") {
+                Tile(
+                    onClick = { vm.watchMyMatches(s.live)?.let(onWatch) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = side - 4.dp),
+                    focusScale = 1.02f, color = VyzoColors.Surface.copy(alpha = 0.85f), shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text(
+                        "Regarder mes matchs (${vm.myChannels(s.live).size})", fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                    )
                 }
             }
             item(key = "upcoming") {
@@ -172,7 +218,8 @@ fun SportScreen(
         ActionDialog(
             title = e.program.title,
             subtitle = "${Fmt.range(e.program.start, e.program.stop)} · choisis la chaîne",
-            actions = e.channels.map { ch -> ActionItem(ch.name, Icons.Default.LiveTv) { onWatch(ch) } },
+            actions = e.channels.map { ch -> ActionItem(ch.name, Icons.Default.LiveTv) { onWatch(ch) } } +
+                ActionItem(if (e.key in myMatches) "Retirer de mes matchs" else "Ajouter à mes matchs", Icons.Default.GridView) { vm.toggleMyMatch(e) },
             onDismiss = { chooser = null },
         )
     }

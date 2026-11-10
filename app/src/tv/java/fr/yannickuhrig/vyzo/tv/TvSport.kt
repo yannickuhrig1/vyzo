@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SportsSoccer
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ProgramEntity
+import fr.yannickuhrig.vyzo.data.sport.MatchScore
 import fr.yannickuhrig.vyzo.data.sport.SportEvent
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
 import fr.yannickuhrig.vyzo.ui.common.ActionItem
@@ -150,6 +152,7 @@ fun sportView(state: SportState, window: SportWindow, kind: Int, now: Long): Spo
 fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, ProgramEntity) -> Unit) {
     val vm = appViewModel { SportViewModel(it) }
     val state by vm.state.collectAsState()
+    val myMatches by vm.myMatches.collectAsState()
     var window by remember { mutableStateOf(SportWindow.ALL) }
     var kind by remember { mutableIntStateOf(-1) }
     var chooser by remember { mutableStateOf<SportEvent?>(null) }
@@ -199,6 +202,10 @@ fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, Program
                             verticalAlignment = Alignment.CenterVertically,
                             contentPadding = PaddingValues(vertical = dpx(4), horizontal = dpx(12)),
                         ) {
+                            val mine = vm.myChannels(s.live).size
+                            if (mine >= 2 && myMatches.isNotEmpty()) item(key = "mine") {
+                                FilterPill("Regarder mes matchs · $mine", false, Icons.Default.GridView) { vm.watchMyMatches(s.live)?.let(onWatch) }
+                            }
                             itemsIndexed(SportWindow.entries, key = { _, w -> "w${w.name}" }) { i, w ->
                                 val own = remember { FocusRequester() }
                                 FilterPill(w.label, window == w, if (i == 0) Icons.Default.Schedule else null, Modifier.focusRequester(if (window == w) filterEntry else own)) { window = w }
@@ -211,12 +218,12 @@ fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, Program
                         }
                     }
                     if (view.live.isNotEmpty()) item(key = "live") {
-                        EventRow("En direct", view.live, first, onClick = { e ->
+                        EventRow("En direct", view.live, first, s.scores, onClick = { e ->
                             if (e.channels.size > 1) chooser = e else watch(eventFocusKey(e), e.channels.first())
                         }, onLongClick = { chooser = it })
                     }
                     if (view.upcoming.isNotEmpty()) item(key = "upcoming") {
-                        EventRow("À venir", view.upcoming, if (view.live.isEmpty()) first else null, onClick = { e ->
+                        EventRow("À venir", view.upcoming, if (view.live.isEmpty()) first else null, emptyMap(), onClick = { e ->
                             programMenu = e.channels.first() to e.program
                         }, onLongClick = null)
                     }
@@ -263,7 +270,7 @@ fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, Program
                     LastFocus.pending = eventFocusKey(e)
                     onWatch(ch)
                 }
-            },
+            } + ActionItem(if (e.key in myMatches) "Retirer de mes matchs" else "Ajouter à mes matchs", Icons.Default.GridView) { vm.toggleMyMatch(e) },
             onDismiss = { chooser = null },
         )
     }
@@ -287,6 +294,7 @@ private fun EventRow(
     title: String,
     events: List<SportEvent>,
     firstCard: FocusRequester?,
+    scores: Map<String, MatchScore>,
     onClick: (SportEvent) -> Unit,
     onLongClick: ((SportEvent) -> Unit)?,
 ) {
@@ -300,7 +308,7 @@ private fun EventRow(
             itemsIndexed(events, key = { _, e -> e.key }) { i, e ->
                 val own = remember { FocusRequester() }
                 EventCard(
-                    e, Modifier.focusRequester(if (i == 0 && firstCard != null) firstCard else own).restoreFocus(eventFocusKey(e)),
+                    e, scores[e.key], Modifier.focusRequester(if (i == 0 && firstCard != null) firstCard else own).restoreFocus(eventFocusKey(e)),
                     onClick = { onClick(e) },
                     onLongClick = onLongClick?.let { handler -> { handler(e) } },
                 )
@@ -311,7 +319,7 @@ private fun EventRow(
 
 /** Carte d'un match : chaîne, titre, horaire ; la progression pour un match en cours. */
 @Composable
-private fun EventCard(e: SportEvent, modifier: Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)?) {
+private fun EventCard(e: SportEvent, score: MatchScore?, modifier: Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)?) {
     val p = e.program
     val ch = e.channels.first()
     val now = System.currentTimeMillis()
@@ -331,10 +339,13 @@ private fun EventCard(e: SportEvent, modifier: Modifier, onClick: () -> Unit, on
             }
             Text(p.title, color = Color.White, fontSize = spx(20), lineHeight = spx(25), fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.weight(1f))
-            Text(
-                if (live) Fmt.range(p.start, p.stop) else "${Fmt.day(p.start)} · ${Fmt.range(p.start, p.stop)}",
-                color = Accent2, fontSize = spx(15), maxLines = 1,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(12))) {
+                Text(
+                    if (live) Fmt.range(p.start, p.stop) else "${Fmt.day(p.start)} · ${Fmt.range(p.start, p.stop)}",
+                    color = Accent2, fontSize = spx(15), maxLines = 1, modifier = Modifier.weight(1f),
+                )
+                if (score != null) Text(score.label, color = Color.White, fontSize = spx(17), fontWeight = FontWeight.Bold, maxLines = 1)
+            }
             if (live) ProgressBar(programProgress(p.start, p.stop, now), Accent2)
         }
     }

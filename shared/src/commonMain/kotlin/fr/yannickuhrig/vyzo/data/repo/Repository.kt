@@ -9,6 +9,7 @@ import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ChannelHistoryEntity
 import fr.yannickuhrig.vyzo.data.db.ChannelPrefEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
+import fr.yannickuhrig.vyzo.data.db.EpgMode
 import fr.yannickuhrig.vyzo.data.db.EpgSourceEntity
 import fr.yannickuhrig.vyzo.data.db.EpisodeEntity
 import fr.yannickuhrig.vyzo.data.db.FAVORITES_GROUP_ID
@@ -978,8 +979,22 @@ class Repository(
 
     fun epgSources() = db.epg().observeSources()
 
-    suspend fun addEpgSource(name: String, url: String) =
-        db.epg().insertSource(EpgSourceEntity(name = name.ifBlank { "Guide perso" }, url = url.trim()))
+    suspend fun addEpgSource(name: String, url: String, mode: String = EpgMode.FILL): Long {
+        val nextRank = (db.epg().sources().maxOfOrNull { it.priority } ?: -1) + 1
+        return db.epg().insertSource(EpgSourceEntity(name = name.ifBlank { "Guide perso" }, url = url.trim(), priority = nextRank, mode = mode))
+    }
+
+    /** Déplace une source d'un rang vers le haut ([delta] = -1) ou le bas (+1). */
+    suspend fun moveEpgSource(src: EpgSourceEntity, delta: Int) {
+        val sources = db.epg().sources().toMutableList()
+        val from = sources.indexOfFirst { it.id == src.id }
+        val to = from + delta
+        if (from < 0 || to !in sources.indices) return
+        sources.add(to, sources.removeAt(from))
+        sources.forEachIndexed { rank, source -> if (source.priority != rank) db.epg().updateSource(source.copy(priority = rank)) }
+    }
+
+    suspend fun setEpgSourceMode(src: EpgSourceEntity, mode: String) = db.epg().updateSource(src.copy(mode = mode))
 
     suspend fun setEpgSourceEnabled(src: EpgSourceEntity, enabled: Boolean) = db.epg().updateSource(src.copy(enabled = enabled))
 

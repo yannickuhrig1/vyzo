@@ -24,6 +24,10 @@ object HomeRows {
     const val TRENDING_SERIES = "trending_series"
     const val FAV_MOVIES = "fav_movies"
     const val FAV_SERIES = "fav_series"
+    const val TRAKT_WATCHLIST_MOVIES = "trakt_watchlist_movies"
+    const val TRAKT_WATCHLIST_SERIES = "trakt_watchlist_series"
+    const val TRAKT_RECO_MOVIES = "trakt_reco_movies"
+    const val TRAKT_RECO_SERIES = "trakt_reco_series"
     const val APPS = "apps"
     const val GENRE_MOVIES = "genre_movies:"
     const val GENRE_SERIES = "genre_series:"
@@ -31,7 +35,8 @@ object HomeRows {
     /** Rangées proposées, dans l'ordre par défaut. */
     val BUILT_IN = listOf(
         ON_AIR, SPORT_LIVE, CONTINUE_SERIES, CONTINUE_MOVIES, FAV_CHANNELS, RECENT_CHANNELS, ADDED_MOVIES, TOP_MOVIES,
-        ADDED_SERIES, TOP_SERIES, TRENDING_MOVIES, TRENDING_SERIES, FAV_MOVIES, FAV_SERIES, APPS,
+        ADDED_SERIES, TOP_SERIES, TRENDING_MOVIES, TRENDING_SERIES, FAV_MOVIES, FAV_SERIES,
+        TRAKT_WATCHLIST_MOVIES, TRAKT_WATCHLIST_SERIES, TRAKT_RECO_MOVIES, TRAKT_RECO_SERIES, APPS,
     )
 
     /** Rangées affichées au premier lancement. */
@@ -54,6 +59,10 @@ object HomeRows {
         id == TRENDING_SERIES -> "Séries en tendance"
         id == FAV_MOVIES -> "Films favoris"
         id == FAV_SERIES -> "Séries favorites"
+        id == TRAKT_WATCHLIST_MOVIES -> "Ma liste Trakt — films"
+        id == TRAKT_WATCHLIST_SERIES -> "Ma liste Trakt — séries"
+        id == TRAKT_RECO_MOVIES -> "Recommandés par Trakt — films"
+        id == TRAKT_RECO_SERIES -> "Recommandés par Trakt — séries"
         id == APPS -> "Applications"
         id.startsWith(GENRE_MOVIES) -> "Films · ${Genres.label(id.removePrefix(GENRE_MOVIES))}"
         id.startsWith(GENRE_SERIES) -> "Séries · ${Genres.label(id.removePrefix(GENRE_SERIES))}"

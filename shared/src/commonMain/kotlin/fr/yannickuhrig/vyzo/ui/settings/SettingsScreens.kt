@@ -7,38 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.filled.Clear
-import fr.yannickuhrig.vyzo.player.AUDIO_DELAY_CHOICES
-import fr.yannickuhrig.vyzo.player.audioDelayLabel
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.DownloadForOffline
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.runtime.key
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import fr.yannickuhrig.vyzo.data.source.xtream.XtreamClient
-import fr.yannickuhrig.vyzo.util.plural
-import fr.yannickuhrig.vyzo.data.db.DownloadEntity
-import fr.yannickuhrig.vyzo.data.db.DownloadStatus
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -52,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -63,58 +35,87 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.DownloadForOffline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PictureInPicture
-import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.QrCode2
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.yannickuhrig.vyzo.data.db.CategoryRow
 import fr.yannickuhrig.vyzo.data.db.ContentKind
+import fr.yannickuhrig.vyzo.data.db.DownloadEntity
+import fr.yannickuhrig.vyzo.data.db.DownloadStatus
+import fr.yannickuhrig.vyzo.data.db.EpgMode
 import fr.yannickuhrig.vyzo.data.db.FAVORITES_GROUP_ID
+import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
 import fr.yannickuhrig.vyzo.data.db.SourceType
 import fr.yannickuhrig.vyzo.data.db.UserGroupEntity
 import fr.yannickuhrig.vyzo.data.net.redactCredentials
 import fr.yannickuhrig.vyzo.data.prefs.AppSettings
-import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
+import fr.yannickuhrig.vyzo.data.prefs.PlayerOrientation
+import fr.yannickuhrig.vyzo.data.source.xtream.XtreamClient
+import fr.yannickuhrig.vyzo.data.trakt.traktConnected
 import fr.yannickuhrig.vyzo.diag.CrashReporter
 import fr.yannickuhrig.vyzo.diag.DiagLog
-import fr.yannickuhrig.vyzo.ui.profile.NewPinDialog
-import fr.yannickuhrig.vyzo.ui.profile.PinDialog
-import fr.yannickuhrig.vyzo.update.UpdateState
+import fr.yannickuhrig.vyzo.player.AUDIO_DELAY_CHOICES
+import fr.yannickuhrig.vyzo.player.audioDelayLabel
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
 import fr.yannickuhrig.vyzo.ui.common.ActionItem
 import fr.yannickuhrig.vyzo.ui.common.Choice
@@ -129,9 +130,14 @@ import fr.yannickuhrig.vyzo.ui.common.isTv
 import fr.yannickuhrig.vyzo.ui.common.rememberOverlaySetting
 import fr.yannickuhrig.vyzo.ui.common.rememberPickFolder
 import fr.yannickuhrig.vyzo.ui.common.rememberSaveFile
-import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
+import fr.yannickuhrig.vyzo.ui.player.RemoteKeymap
+import fr.yannickuhrig.vyzo.ui.profile.NewPinDialog
+import fr.yannickuhrig.vyzo.ui.profile.PinDialog
 import fr.yannickuhrig.vyzo.ui.remote.ReceiveFromPhoneDialog
 import fr.yannickuhrig.vyzo.ui.remote.SendToTvFlow
+import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
+import fr.yannickuhrig.vyzo.update.UpdateState
+import fr.yannickuhrig.vyzo.util.plural
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -174,7 +180,7 @@ private data class PendingChoice(
 )
 
 @Composable
-private fun ScreenColumn(content: LazyListScope.() -> Unit) {
+internal fun ScreenColumn(content: LazyListScope.() -> Unit) {
     val tv = isTv()
     // La liste occupe toute la largeur pour que la molette agisse partout ; seul le texte reste limité en largeur.
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -205,6 +211,9 @@ fun accountLine(p: PlaylistEntity, now: Long = System.currentTimeMillis()): Stri
 fun SettingsScreen(
     onEditPlaylist: (Long) -> Unit,
     onEpgSources: () -> Unit,
+    onCheckChannels: () -> Unit = {},
+    onTrakt: () -> Unit = {},
+    onRemoteKeys: () -> Unit = {},
     onGroups: () -> Unit,
     onGroupOrder: () -> Unit = onGroups,
     onProfiles: () -> Unit = {},
@@ -540,6 +549,7 @@ fun SettingsScreen(
 
         section("Guide TV (EPG)")
         row("Sources du guide (EPG)", "Guides XMLTV des playlists et sources ajoutées", Icons.AutoMirrored.Filled.List) { onEpgSources() }
+        row("Vérifier les chaînes", "Teste les flux un par un et repère ceux qui ne répondent plus", Icons.Default.Refresh) { onCheckChannels() }
         row("Jours de programmes à charger", "${s.epgDaysAhead} jour(s) à venir") {
             choose("Jours à venir", (1..7).map { Choice(it, "$it jour(s)") }, s.epgDaysAhead) { v -> update { it.copy(epgDaysAhead = v) } }
         }
@@ -567,6 +577,22 @@ fun SettingsScreen(
         // ---------------------------------------------------------- 2. Lecture, PiP & Sous-titres
         category(SettingsCategory.PLAYBACK)
         section("Lecteur")
+        if (tv && !desktop) {
+            row("Touches de la télécommande", if (RemoteKeymap.isDefault(s.remoteBindings)) "Touches d'origine" else "Personnalisées") { onRemoteKeys() }
+        }
+        if (!tv && !desktop) {
+            row("Orientation de l'écran", PlayerOrientation.label(s.playerOrientation)) {
+                choose(
+                    "Orientation de l'écran",
+                    listOf(
+                        Choice(PlayerOrientation.AUTO, PlayerOrientation.label(PlayerOrientation.AUTO), "Suit le téléphone"),
+                        Choice(PlayerOrientation.LANDSCAPE, PlayerOrientation.label(PlayerOrientation.LANDSCAPE)),
+                        Choice(PlayerOrientation.PORTRAIT, PlayerOrientation.label(PlayerOrientation.PORTRAIT)),
+                    ),
+                    s.playerOrientation,
+                ) { v -> scope.launch { c.settings.update { it.copy(playerOrientation = v) } } }
+            }
+        }
         row("Format des flux Xtream", if (s.xtreamFormat == "m3u8") "HLS (.m3u8)" else "MPEG-TS (.ts)") {
             choose("Format Xtream", listOf(Choice("ts", "MPEG-TS (.ts)", "Recommandé, le plus compatible"), Choice("m3u8", "HLS (.m3u8)", "Si le serveur le préfère")), s.xtreamFormat) { v ->
                 update { it.copy(xtreamFormat = v) }
@@ -724,6 +750,8 @@ fun SettingsScreen(
             "Clé API OMDb",
             if (s.omdbApiKey.isBlank()) "Facultative : ajoute les notes IMDb, Rotten Tomatoes et Metacritic aux fiches" else "Configurée",
         ) { omdbDialog = true }
+        row("Trakt", if (s.traktConnected) "Connecté" else "Suivi de ce que tu regardes, listes et recommandations") { onTrakt() }
+        toggle("Scores en direct", "Scores des matchs dans l'espace sport (service non officiel d'ESPN)", s.sportScores) { v -> update { it.copy(sportScores = v) } }
 
         section("Interface")
         row(
@@ -1363,7 +1391,7 @@ private fun uiModeLabel(m: String) = when (m) {
 // ------------------------------------------------------------------ Sources EPG
 
 @Composable
-fun EpgSourcesScreen() {
+fun EpgSourcesScreen(onCatalog: () -> Unit = {}) {
     val c = LocalContainer.current
     val scope = rememberCoroutineScope()
     val sources by c.repo.epgSources().collectAsState(emptyList())
@@ -1387,6 +1415,16 @@ fun EpgSourcesScreen() {
                 add(ActionItem(if (src.enabled) "Désactiver" else "Activer", if (src.enabled) Icons.Default.VisibilityOff else Icons.Default.Visibility) {
                     scope.launch { c.repo.setEpgSourceEnabled(src, !src.enabled) }
                 })
+                val rank = sources.indexOfFirst { it.id == src.id }
+                if (rank > 0) add(ActionItem("Monter dans la liste", Icons.Default.KeyboardArrowUp) { scope.launch { c.repo.moveEpgSource(src, -1) } })
+                if (rank in 0 until sources.lastIndex) add(ActionItem("Descendre dans la liste", Icons.Default.KeyboardArrowDown) { scope.launch { c.repo.moveEpgSource(src, 1) } })
+                val fillsGaps = src.mode == EpgMode.GAPS
+                add(
+                    ActionItem(
+                        if (fillsGaps) "Ne servir que pour les chaînes sans guide" else "Compléter aussi les trous du guide",
+                        Icons.Default.Refresh,
+                    ) { scope.launch { c.repo.setEpgSourceMode(src, if (fillsGaps) EpgMode.FILL else EpgMode.GAPS) } },
+                )
                 if (!src.auto) add(ActionItem("Supprimer", Icons.Default.Delete, tint = VyzoColors.Red) { scope.launch { c.repo.deleteEpgSource(src) } })
             },
             onDismiss = { menu = null },
@@ -1401,10 +1439,13 @@ fun EpgSourcesScreen() {
             }
         }
         item { SettingRow("Ajouter une source XMLTV", icon = Icons.Default.Add) { newName = ""; adding = 1 } }
-        itemsIndexed(sources, key = { _, s -> s.id }) { _, src ->
+        item { SettingRow("Ajouter depuis le catalogue", "Guides epgshare01 par pays", Icons.Default.Add, onClick = onCatalog) }
+        itemsIndexed(sources, key = { _, s -> s.id }) { index, src ->
             SettingRow(
                 title = src.name + if (!src.enabled) " (désactivée)" else "",
                 value = listOfNotNull(
+                    "Priorité ${index + 1}",
+                    if (src.mode == EpgMode.GAPS) "complète les trous" else "chaînes sans guide",
                     if (src.auto) "Fournie par la playlist" else "Ajoutée manuellement",
                     if (src.lastSync > 0) "${src.programCount} programmes · ${Fmt.dayTime(src.lastSync)}" else "jamais chargée",
                     src.lastError.takeIf { it.isNotBlank() }?.let { "erreur : $it" },
@@ -1415,7 +1456,8 @@ fun EpgSourcesScreen() {
         item {
             Text(
                 "Les chaînes sont associées au guide par leur identifiant tvg-id, ou à défaut par leur nom. " +
-                    "Si une source couvre déjà une chaîne, les suivantes sont ignorées pour celle-ci.",
+                    "Les sources passent dans l'ordre de la liste : si l'une couvre déjà une chaîne, les suivantes sont ignorées pour celle-ci, " +
+                    "sauf celles qui complètent les trous du guide.",
                 style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim, modifier = Modifier.padding(14.dp),
             )
         }

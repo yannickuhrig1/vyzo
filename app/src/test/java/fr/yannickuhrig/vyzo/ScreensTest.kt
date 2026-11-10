@@ -1,22 +1,28 @@
 package fr.yannickuhrig.vyzo
 
+import android.content.pm.ActivityInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
-import fr.yannickuhrig.vyzo.ui.MainNav
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -26,14 +32,18 @@ import fr.yannickuhrig.vyzo.data.db.RecordingEntity
 import fr.yannickuhrig.vyzo.data.db.RecordingRuleEntity
 import fr.yannickuhrig.vyzo.data.db.RecordingStatus
 import fr.yannickuhrig.vyzo.data.db.SourceType
+import fr.yannickuhrig.vyzo.data.prefs.PlayerOrientation
 import fr.yannickuhrig.vyzo.data.repo.Repository
+import fr.yannickuhrig.vyzo.ui.MainNav
 import fr.yannickuhrig.vyzo.ui.common.FormFactor
 import fr.yannickuhrig.vyzo.ui.common.LocalContainer
 import fr.yannickuhrig.vyzo.ui.common.LocalFormFactor
 import fr.yannickuhrig.vyzo.ui.common.PlayKind
+import fr.yannickuhrig.vyzo.ui.common.PlayerWindowEffect
 import fr.yannickuhrig.vyzo.ui.guide.GuideScreen
 import fr.yannickuhrig.vyzo.ui.live.LiveScreen
 import fr.yannickuhrig.vyzo.ui.player.PlayerScreen
+import fr.yannickuhrig.vyzo.ui.player.RemoteKeymap
 import fr.yannickuhrig.vyzo.ui.profile.PinDialog
 import fr.yannickuhrig.vyzo.ui.profile.ProfilesScreen
 import fr.yannickuhrig.vyzo.ui.profile.WhoIsWatchingScreen
@@ -49,6 +59,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -213,6 +224,54 @@ class TvScreensTest : ScreensBase() {
         shoot("tv_14_enregistrements", FormFactor.TV) { ScheduledScreen(onPlayRecording = {}, onWatchChannel = {}) }
     }
 
+    private fun playerWithKeys(bindings: Map<String, String>, keys: () -> Unit) {
+        runBlocking { app.container.settings.update { it.copy(remoteBindings = bindings) } }
+        shoot("", FormFactor.TV, 2500, after = keys, capture = false) {
+            PlayerScreen(PlayKind.CHANNEL, "$playlistId:L:101", Repository.KEY_ALL, 0, -1, onExit = {}, onCatchup = { _, _ -> })
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun pressLeft(heldMs: Long = 0) {
+        compose.onNode(androidx.compose.ui.test.isFocused()).performKeyInput {
+            keyDown(Key.DirectionLeft)
+            if (heldMs > 0) advanceEventTime(heldMs)
+            keyUp(Key.DirectionLeft)
+        }
+    }
+
+    private val guidePanel = "◀ ▶ : autres chaînes   OK : regarder, replay, rappel, enregistrer"
+    private val channelPanel = "Toutes les chaînes"
+
+    @Test fun tivimateStyleShortLeftOpensTheChannels() {
+        playerWithKeys(RemoteKeymap.TIVIMATE_STYLE) { pressLeft() }
+        compose.onNodeWithText(channelPanel).assertExists()
+        compose.onNodeWithText(guidePanel).assertDoesNotExist()
+    }
+
+    @Test fun tivimateStyleHeldLeftOpensTheGuide() {
+        playerWithKeys(RemoteKeymap.TIVIMATE_STYLE) { pressLeft(heldMs = 900) }
+        compose.onNodeWithText(guidePanel).assertExists()
+        compose.onNodeWithText(channelPanel).assertDoesNotExist()
+    }
+
+    @Test fun tivimateStyleRightOnlyShowsTheProgramme() {
+        playerWithKeys(RemoteKeymap.TIVIMATE_STYLE) {
+            pressRight()
+            pressRight()
+        }
+        compose.onNodeWithText(guidePanel).assertDoesNotExist()
+        compose.onNodeWithText("OK : chaînes   0 : chaîne précédente").assertExists()
+    }
+
+    @Test fun originalKeysStillOpenTheGuideFromTheBanner() {
+        playerWithKeys(emptyMap()) {
+            pressRight()
+            pressRight()
+        }
+        compose.onNodeWithText(guidePanel).assertExists()
+    }
+
     @Test fun playerMiniGuide() = shoot("tv_15_lecteur_mini_guide", FormFactor.TV, 2500, after = { pressRight() }) {
         PlayerScreen(PlayKind.CHANNEL, "$playlistId:L:101", Repository.KEY_ALL, 0, -1, onExit = {}, onCatchup = { _, _ -> })
     }
@@ -243,5 +302,38 @@ class PhoneScreensTest : ScreensBase() {
     @Config(qualifiers = "w852dp-h393dp-land-xxhdpi")
     fun player() = shoot("tel_7_lecteur", FormFactor.PHONE, 2500) {
         PlayerScreen(PlayKind.CHANNEL, "$playlistId:L:101", Repository.KEY_ALL, 0, -1, onExit = {}, onCatchup = { _, _ -> })
+    }
+
+    @Test
+    fun playerAppliesTheChosenOrientationThenRestoresTheScreen() {
+        val before = compose.activity.requestedOrientation
+        var orientation by mutableStateOf(PlayerOrientation.AUTO)
+        var playing by mutableStateOf(true)
+        compose.setContent { if (playing) PlayerWindowEffect(tv = false, orientation = orientation) }
+        compose.waitForIdle()
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_FULL_USER, compose.activity.requestedOrientation)
+
+        orientation = PlayerOrientation.PORTRAIT
+        compose.waitForIdle()
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, compose.activity.requestedOrientation)
+
+        orientation = PlayerOrientation.LANDSCAPE
+        compose.waitForIdle()
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, compose.activity.requestedOrientation)
+
+        playing = false
+        compose.waitForIdle()
+        assertEquals(before, compose.activity.requestedOrientation)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-xxhdpi")
+    fun playerInPortrait() {
+        shoot("tel_8_lecteur_portrait", FormFactor.PHONE, 1500) {
+            PlayerScreen(PlayKind.CHANNEL, "$playlistId:L:101", Repository.KEY_ALL, 0, -1, onExit = {}, onCatchup = { _, _ -> })
+        }
+        listOf("Retour", "Chaînes", "Options", "Chaîne précédente", "Guide de la chaîne").forEach {
+            compose.onNodeWithContentDescription(it).assertIsDisplayed()
+        }
     }
 }

@@ -30,7 +30,7 @@ const val DEFAULT_PROFILE_NAME = "Principal"
         ProfileEntity::class, ChannelPrefEntity::class, SyncTombstoneEntity::class, RecordingRuleEntity::class,
         DownloadEntity::class, StreamQualityEntity::class, MetadataCacheEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 @ConstructedBy(AppDatabaseConstructor::class)
@@ -69,7 +69,7 @@ abstract class AppDatabase : RoomDatabase() {
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                 .build()
 
-        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
 
         private fun insertFavoritesGroup(db: SQLiteConnection) {
             db.execSQL(
@@ -274,6 +274,14 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /** 6 → 7 : cache des réponses de TMDB et d'OMDb. */
+        /** 7 → 8 : rang et mode de chaque source du guide. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE `epg_source` ADD COLUMN `priority` INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE `epg_source` ADD COLUMN `mode` TEXT NOT NULL DEFAULT 'FILL'")
+            }
+        }
+
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(

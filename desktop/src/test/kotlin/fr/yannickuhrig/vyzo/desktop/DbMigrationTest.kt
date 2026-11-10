@@ -75,4 +75,23 @@ class DbMigrationTest {
         assertEquals("{}", db.metadataCache().get("cle")?.body)
         db.close()
     }
+
+    @Test
+    fun uneBaseEnVersion7GardeSesGuidesEtGagneRangEtMode() = runBlocking {
+        val file = Files.createTempDirectory("vyzo-migration").toFile().resolve(DATABASE_NAME)
+        createFromSchema(file, 7)
+        BundledSQLiteDriver().open(file.absolutePath).use {
+            it.execSQL("INSERT INTO epg_source (id, playlistId, name, url, enabled, auto, lastSync, lastError, programCount) VALUES (5, 0, 'Perso', 'http://x', 1, 0, 0, '', 0)")
+        }
+        val db = AppDatabase.build(
+            Room.databaseBuilder<AppDatabase>(name = file.absolutePath)
+                .setDriver(BundledSQLiteDriver())
+                .setQueryCoroutineContext(Dispatchers.IO),
+        )
+        val source = db.epg().sources().single()
+        assertEquals("Perso", source.name)
+        assertEquals(0, source.priority)
+        assertEquals("FILL", source.mode)
+        db.close()
+    }
 }

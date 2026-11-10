@@ -142,7 +142,9 @@ import fr.yannickuhrig.vyzo.ui.profile.WhoIsWatchingScreen
 import fr.yannickuhrig.vyzo.ui.profile.rememberParentalGate
 import fr.yannickuhrig.vyzo.ui.settings.AccountScreen
 import fr.yannickuhrig.vyzo.ui.settings.ChannelsEditScreen
+import fr.yannickuhrig.vyzo.ui.settings.EpgCatalogScreen
 import fr.yannickuhrig.vyzo.ui.settings.EpgSourcesScreen
+import fr.yannickuhrig.vyzo.ui.settings.PlaylistCheckScreen
 import fr.yannickuhrig.vyzo.ui.settings.GroupsScreen
 import fr.yannickuhrig.vyzo.ui.settings.GroupOrderScreen
 import fr.yannickuhrig.vyzo.ui.settings.PlaylistEditScreen
@@ -160,6 +162,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import fr.yannickuhrig.vyzo.data.cloud.VaultState
+import fr.yannickuhrig.vyzo.ui.settings.RemoteKeysScreen
+import fr.yannickuhrig.vyzo.ui.settings.TraktScreen
 import kotlinx.coroutines.launch
 
 sealed interface LaunchRequest {
@@ -208,6 +212,10 @@ private fun titleFor(route: String?): String = when {
     route == Routes.SEARCH -> "Recherche"
     route == Routes.SETTINGS -> "Réglages"
     route == Routes.EPG -> "Sources du guide"
+    route == Routes.EPG_CATALOG -> "Catalogue de guides"
+    route == Routes.PLAYLIST_CHECK -> "Vérifier les chaînes"
+    route == Routes.TRAKT -> "Trakt"
+    route == Routes.REMOTE_KEYS -> "Touches de la télécommande"
     route == Routes.GROUPS -> "Groupes et catégories"
     route == Routes.GROUP_ORDER -> "Gérer l'ordre des groupes"
     route == Routes.PROFILES -> "Profils"
@@ -714,6 +722,9 @@ private fun NavGraph(nav: NavHostController) {
             SettingsScreen(
                 onEditPlaylist = { nav.navigate(Routes.playlistEdit(it)) },
                 onEpgSources = { nav.navigate(Routes.EPG) },
+                onCheckChannels = { nav.navigate(Routes.PLAYLIST_CHECK) },
+                onTrakt = { nav.navigate(Routes.TRAKT) },
+                onRemoteKeys = { nav.navigate(Routes.REMOTE_KEYS) },
                 onGroups = { nav.navigate(Routes.GROUPS) },
                 onGroupOrder = { nav.navigate(Routes.GROUP_ORDER) },
                 onProfiles = { nav.navigate(Routes.PROFILES) },
@@ -722,7 +733,11 @@ private fun NavGraph(nav: NavHostController) {
                 onHome = { nav.navigate(Routes.HOME_EDIT) },
             )
         }
-        composable(Routes.EPG) { EpgSourcesScreen() }
+        composable(Routes.EPG) { EpgSourcesScreen(onCatalog = { nav.navigate(Routes.EPG_CATALOG) }) }
+        composable(Routes.EPG_CATALOG) { EpgCatalogScreen() }
+        composable(Routes.PLAYLIST_CHECK) { PlaylistCheckScreen() }
+        composable(Routes.TRAKT) { TraktScreen() }
+        composable(Routes.REMOTE_KEYS) { RemoteKeysScreen() }
         composable(Routes.GROUPS) { GroupsScreen(onEditChannels = { nav.navigate(Routes.channelsEdit(it)) }) }
         composable(Routes.GROUP_ORDER) { GroupOrderScreen() }
         composable(Routes.PROFILES) { ProfilesScreen() }

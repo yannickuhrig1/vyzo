@@ -17,6 +17,9 @@ const val LOCKED_CATEGORIES =
 /** Identifiant et nom normalisé d'un élément (recherche tolérante aux fautes de frappe). */
 data class NameRow(val uid: String, val name: String)
 
+/** Créneau occupé dans le guide d'une chaîne. */
+data class ProgramSlot(val channelKey: String, val start: Long, val stop: Long)
+
 /** Catégories masquées par l'utilisateur. */
 const val HIDDEN_CATEGORIES = "(SELECT hp.uid FROM category_pref hp WHERE hp.hidden = 1)"
 
@@ -577,6 +580,12 @@ interface ProgramDao {
     @Query("DELETE FROM program WHERE sourceKey = :sourceKey AND stop > :from")
     suspend fun deleteSourceAfter(sourceKey: String, from: Long)
 
+    @Query(
+        """SELECT channelKey, start, stop FROM program
+           WHERE channelKey IN (:keys) AND sourceKey IN (:sources) AND stop > :from AND start < :to""",
+    )
+    suspend fun slots(keys: List<String>, sources: List<String>, from: Long, to: Long): List<ProgramSlot>
+
     @Query("SELECT COUNT(*) FROM program WHERE sourceKey = :sourceKey")
     suspend fun countSource(sourceKey: String): Int
 
@@ -593,10 +602,10 @@ interface ProgramDao {
 
 @Dao
 interface EpgDao {
-    @Query("SELECT * FROM epg_source ORDER BY auto DESC, id")
+    @Query("SELECT * FROM epg_source ORDER BY priority, auto DESC, id")
     fun observeSources(): Flow<List<EpgSourceEntity>>
 
-    @Query("SELECT * FROM epg_source ORDER BY auto DESC, id")
+    @Query("SELECT * FROM epg_source ORDER BY priority, auto DESC, id")
     suspend fun sources(): List<EpgSourceEntity>
 
     @Query("SELECT * FROM epg_source WHERE playlistId = :pid AND auto = 1")

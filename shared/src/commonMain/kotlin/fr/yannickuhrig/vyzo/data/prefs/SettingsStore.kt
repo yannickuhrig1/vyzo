@@ -51,6 +51,23 @@ data class AppSettings(
     val fastZap: Boolean = false,
     /** Heure affichée en permanence pendant la lecture. */
     val playerClock: Boolean = false,
+    /** Orientation du lecteur sur téléphone. Voir [PlayerOrientation]. */
+    val playerOrientation: String = PlayerOrientation.AUTO,
+    /** Touches du direct qui diffèrent des touches par défaut (voir RemoteKeymap). */
+    val remoteBindings: Map<String, String> = emptyMap(),
+    val multiViewPresets: List<MultiViewPreset> = emptyList(),
+    /** Scores ESPN dans l'espace sport. */
+    val sportScores: Boolean = true,
+    /** Application Trakt créée par l'utilisateur. */
+    val traktClientId: String = "",
+    val traktClientSecret: String = "",
+    val traktAccessToken: String = "",
+    val traktRefreshToken: String = "",
+    val traktTokenExpiresAt: Long = 0L,
+    /** Seul ce profil envoie ce qu'il regarde au compte Trakt. */
+    val traktProfileId: String = "",
+    val traktScrobble: Boolean = true,
+    val traktLastSync: Long = 0L,
     val userAgent: String = Http.DEFAULT_UA,
     val audioLang: String = "fr",
     /** Vide = sous-titres désactivés par défaut. */
@@ -210,6 +227,42 @@ data class AppSettings(
  * Pistes choisies pour une série : [audio] et [text] sont les noms des pistes tels que le lecteur les affiche
  * (vides = pas de choix), [textOff] = sous-titres coupés. [at] sert à oublier les séries les plus anciennes.
  */
+@Serializable
+data class MultiViewPreset(val profileId: String, val name: String, val channelUids: List<String>)
+
+object MultiViewPresets {
+    private const val MAX_SCREENS = 4
+
+    fun forProfile(all: List<MultiViewPreset>, profileId: String): List<MultiViewPreset> = all.filter { it.profileId == profileId }
+
+    /** Un préréglage du même nom est remplacé. */
+    fun save(all: List<MultiViewPreset>, profileId: String, name: String, channelUids: List<String>): List<MultiViewPreset> {
+        val clean = name.trim()
+        val others = all.filterNot { it.profileId == profileId && it.name.equals(clean, ignoreCase = true) }
+        return others + MultiViewPreset(profileId, clean, channelUids.distinct().take(MAX_SCREENS))
+    }
+
+    fun remove(all: List<MultiViewPreset>, preset: MultiViewPreset): List<MultiViewPreset> = all - preset
+}
+
+/** Orientation du lecteur sur téléphone. */
+object PlayerOrientation {
+    /** Suit le téléphone, en respectant le verrouillage de la rotation. */
+    const val AUTO = "AUTO"
+    const val LANDSCAPE = "LANDSCAPE"
+    const val PORTRAIT = "PORTRAIT"
+
+    private val ORDER = listOf(AUTO, LANDSCAPE, PORTRAIT)
+
+    fun next(current: String): String = ORDER[(ORDER.indexOf(current) + 1).mod(ORDER.size)]
+
+    fun label(value: String): String = when (value) {
+        LANDSCAPE -> "Paysage"
+        PORTRAIT -> "Portrait"
+        else -> "Automatique"
+    }
+}
+
 @Serializable
 data class SeriesTracks(val audio: String = "", val text: String = "", val textOff: Boolean = false, val at: Long = 0)
 
