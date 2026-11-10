@@ -1,6 +1,8 @@
 # Construit Vyzo PC (.deb pour Linux, .msi pour Windows avec VLC inclus) et publie la release GitHub.
 # Se lance à chaque tag « v* » ou à la main (onglet Actions) ; le tag est alors créé à partir de vyzo.versionName.
-# Notes : release-notes/vX.Y.Z.md. Les APK TV et mobile, signés sur le PC qui a la clé, partent par scripts/publier-mise-a-jour.sh.
+# Notes : release-notes/vX.Y.Z.md, suivies du guide « Quel fichier choisir ? » (.github/release-telechargements.md).
+# Chaque fichier porte le nom de sa plateforme : Vyzo-X.Y.Z-Windows.msi, -Linux.deb, -macOS-Apple-Silicon.dmg,
+# -Android-TV.apk, -Android-mobile.apk (« -tv » et « -mobile » restent : l'appli cherche son APK par ces mots). Les APK TV et mobile, signés sur le PC qui a la clé, partent par scripts/publier-mise-a-jour.sh.
 # Les fichiers vont directement dans la release (pas d'artefacts : le stockage des artefacts d'un dépôt privé est limité).
 name: Vyzo PC
 
@@ -29,12 +31,16 @@ jobs:
       - name: Version
         id: v
         run: echo "version=$(grep -m1 '^vyzo.versionName=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+      - name: Notes et guide de téléchargement
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          { cat "release-notes/v$V.md"; echo; sed "s/{V}/$V/g" .github/release-telechargements.md; } > release-body.md
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: Vyzo ${{ steps.v.outputs.version }}
           target_commitish: ${{ github.sha }}
-          body_path: release-notes/v${{ steps.v.outputs.version }}.md
+          body_path: release-body.md
           prerelease: ${{ contains(steps.v.outputs.version, '-') }}
 
   linux:
@@ -57,10 +63,14 @@ jobs:
           for f in desktop/build/compose/binaries/main-release/deb/*.deb; do desktop/packaging/deb-depends.sh "$f"; done
       - name: Aucun jeton GitHub dans le .deb
         run: scripts/verifier-sans-jeton.sh desktop/build/compose/binaries/main-release/deb/*.deb
+      - name: Nom avec la plateforme
+        run: |
+          mkdir -p dist-linux
+          cp desktop/build/compose/binaries/main-release/deb/*.deb "dist-linux/Vyzo-${{ needs.release.outputs.version }}-Linux.deb"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.release.outputs.version }}
-          files: desktop/build/compose/binaries/main-release/deb/*.deb
+          files: dist-linux/*.deb
 
   windows:
     needs: release
@@ -77,10 +87,16 @@ jobs:
         run: ./desktop/packaging/prepare-vlc-windows.ps1
       - name: Installeur .msi
         run: ./gradlew :desktop:packageReleaseMsi --no-daemon
+      - name: Nom avec la plateforme
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-windows | Out-Null
+          $msi = Get-ChildItem desktop/build/compose/binaries/main-release/msi/*.msi | Select-Object -First 1
+          Copy-Item $msi.FullName "dist-windows/Vyzo-${{ needs.release.outputs.version }}-Windows.msi"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.release.outputs.version }}
-          files: desktop/build/compose/binaries/main-release/msi/*.msi
+          files: dist-windows/*.msi
 
   macos:
     needs: release
@@ -99,7 +115,7 @@ jobs:
           V="${{ needs.release.outputs.version }}"
           for f in desktop/build/compose/binaries/main-release/dmg/*.dmg desktop/build/compose/binaries/main/dmg/*.dmg; do
             if [ -f "$f" ]; then
-              cp "$f" "dist-mac/Vyzo-$V.dmg"
+              cp "$f" "dist-mac/Vyzo-$V-macOS-Apple-Silicon.dmg"
             fi
           done
           ls -la dist-mac

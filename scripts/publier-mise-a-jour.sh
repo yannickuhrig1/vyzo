@@ -178,8 +178,9 @@ rm -f "$LATEST"
 attach_apks() {
   local dir
   dir=$(mktemp -d)
-  cp "$APK_TV" "$dir/vyzo-tv-$VN.apk"
-  cp "$APK_MOBILE" "$dir/vyzo-mobile-$VN.apk"
+  # Noms lisibles sur la page GitHub ; « -TV » et « -mobile » restent, l'appli (canal bêta) cherche son APK par ces mots.
+  cp "$APK_TV" "$dir/Vyzo-$VN-Android-TV.apk"
+  cp "$APK_MOBILE" "$dir/Vyzo-$VN-Android-mobile.apk"
   if command -v gh > /dev/null && gh release upload "v$VN" -R "$GH_REPO_NAME" --clobber "$dir"/*.apk; then
     echo "APK joints à la release GitHub v$VN."
   else

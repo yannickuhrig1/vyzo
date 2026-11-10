@@ -19,6 +19,18 @@ class ApkVariantTest {
         assertEquals("vyzo-mobile-1.11.0.apk", release.apkFor("mobile")?.name)
     }
 
+    @Test fun `les noms avec la plateforme restent reconnus`() {
+        val named = listOf(
+            GitHubReleaseAsset(name = "Vyzo-1.12.0-macOS-Apple-Silicon.dmg"),
+            GitHubReleaseAsset(name = "Vyzo-1.12.0-Android-mobile.apk"),
+            GitHubReleaseAsset(name = "Vyzo-1.12.0-Android-TV.apk"),
+            GitHubReleaseAsset(name = "Vyzo-1.12.0-Linux.deb"),
+            GitHubReleaseAsset(name = "Vyzo-1.12.0-Windows.msi"),
+        )
+        assertEquals("Vyzo-1.12.0-Android-TV.apk", named.apkFor("tv")?.name)
+        assertEquals("Vyzo-1.12.0-Android-mobile.apk", named.apkFor("mobile")?.name)
+    }
+
     @Test fun `une release a APK unique n'est pas proposee aux applis separees`() {
         assertNull(listOf(GitHubReleaseAsset(name = "Vyzo-1.10.4.apk")).apkFor("tv"))
     }
