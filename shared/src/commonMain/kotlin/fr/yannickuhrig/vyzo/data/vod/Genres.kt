@@ -50,6 +50,17 @@ object Genres {
 
     fun label(id: String): String = byId[id]?.label ?: id
 
+    /**
+     * Genre principal d'un titre : le premier reconnu dans l'ordre du champ (« Drame, Action » → drame).
+     * Accepte aussi un libellé déjà traduit (« Comédie », « Famille et enfants »).
+     */
+    fun primary(genre: String): String? =
+        genre.split(',', '/', '|', '&', ';').firstNotNullOfOrNull { detect(it).firstOrNull() }
+
+    /** Genre principal en français, sinon le premier genre tel que le fournisseur l'écrit. */
+    fun primaryLabel(genre: String): String =
+        primary(genre)?.let(::label) ?: genre.split(',', '/', '|', ';').firstOrNull()?.trim().orEmpty()
+
     private val separators = Regex("[^a-z0-9]+")
 
     /** Genres reconnus dans un texte (genre d'un titre ou nom de catégorie). */

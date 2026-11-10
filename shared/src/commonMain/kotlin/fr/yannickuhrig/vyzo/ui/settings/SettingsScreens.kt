@@ -736,6 +736,11 @@ fun SettingsScreen(
             s.autoGenres,
         ) { v -> update { it.copy(autoGenres = v) } }
         toggle(
+            "Mise en avant",
+            "Bandeau au-dessus des affiches : image, note et résumé du titre (sur TV, celui que tu sélectionnes)",
+            s.vodSpotlight,
+        ) { v -> update { it.copy(vodSpotlight = v) } }
+        toggle(
             "Alerte de nouvel épisode",
             "Notification quand une série en favori ou en cours a un nouvel épisode (playlists Xtream, vérifié toutes les 6 h)",
             s.newEpisodeAlerts,

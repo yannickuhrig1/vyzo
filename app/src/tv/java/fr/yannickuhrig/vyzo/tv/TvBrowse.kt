@@ -1,5 +1,6 @@
 // Dérivé de BrowseScreen.kt et Dropdown.kt d'IPVIO Stream, Copyright (C) 2026 IPVIO Stream contributors, GNU GPL 3.
 // Modifié pour Vyzo le 2026-11-08 : catégories, tris et contrôle parental de Vyzo, filtres sur les données du catalogue, libellés en français.
+// Modifié pour Vyzo le 2026-11-10 : rubriques dans la liste des catégories, bandeau du titre sélectionné, voisines atténuées.
 package fr.yannickuhrig.vyzo.tv
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -78,6 +79,19 @@ import fr.yannickuhrig.vyzo.ui.vod.VodCard
 import fr.yannickuhrig.vyzo.ui.vod.VodSortOrder
 import fr.yannickuhrig.vyzo.ui.vod.VodViewModel
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+import fr.yannickuhrig.vyzo.ui.common.LocalContainer
+import fr.yannickuhrig.vyzo.ui.common.posterColor
+import fr.yannickuhrig.vyzo.ui.vod.VodCategoryLine
+import fr.yannickuhrig.vyzo.ui.vod.vodCardMeta
+import fr.yannickuhrig.vyzo.ui.vod.vodCategoryLines
+import fr.yannickuhrig.vyzo.ui.vod.vodSpotlightPick
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 private const val GRID_COLUMNS = 6
 
@@ -101,7 +115,7 @@ internal fun inPeriod(year: String, period: Int): Boolean {
 internal fun filterCards(list: List<VodCard>, minRating: Float, period: Int): List<VodCard> =
     if (minRating <= 0f && period == 0) list else list.filter { it.rating >= minRating && inPeriod(it.year, period) }
 
-private fun VodCard.toVodItem(kind: ContentKind) = VodItem(kind, uid, title, poster, "", rating, year, "", "", uhd)
+private fun VodCard.toVodItem(kind: ContentKind) = VodItem(kind, uid, title, poster, backdrop, rating, year, genre, plot, uhd)
 
 /** Films ou séries : catégories à gauche, filtres et affiches à droite. */
 @Composable
@@ -113,6 +127,8 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     val sort by vm.sortOrder.collectAsState()
     val loadingMore by vm.loadingMore.collectAsState()
     val gate = rememberParentalGate()
+    val settings = LocalContainer.current.settings
+    val spotlightOn by remember(settings) { settings.flow.map { it.vodSpotlight }.distinctUntilChanged() }.collectAsState(true)
 
     var ratingIndex by rememberSaveable { mutableIntStateOf(0) }
     var period by rememberSaveable { mutableIntStateOf(0) }
@@ -140,12 +156,13 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
 
     val catList = rememberLazyListState()
     val catFocus = remember { FocusRequester() }
+    val lines = remember(cats) { vodCategoryLines(cats) }
     var entered by remember { mutableStateOf(false) }
     LaunchedEffect(cats.isNotEmpty(), selected != null) {
         val key = selected
         if (entered || cats.isEmpty() || key == null) return@LaunchedEffect
         entered = true
-        val index = cats.indexOfFirst { it.key == key }
+        val index = lines.indexOfFirst { it.key == key }
         if (index >= 0) catList.scrollToItem(index)
         focusOnArrival(catFocus)
     }
@@ -154,16 +171,17 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     val listKey = "$selected|$sort|$ratingIndex|$period"
     // Mémorisé : au retour d'une fiche, la grille reste où elle était.
     var scrolledFor by rememberSaveable { mutableStateOf(listKey) }
+    var focusedIndex by remember { mutableIntStateOf(-1) }
     LaunchedEffect(listKey) {
         if (scrolledFor != listKey) {
             scrolledFor = listKey
+            focusedIndex = -1
             grid.scrollToItem(0)
         }
     }
     val nearEnd by remember { derivedStateOf { (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= grid.layoutInfo.totalItemsCount - 12 } }
     LaunchedEffect(nearEnd, items?.size) { if (nearEnd) vm.nearEnd() }
 
-    var focusedIndex by remember { mutableIntStateOf(-1) }
     val title = cats.firstOrNull { it.key == selected }?.title ?: if (kind == ContentKind.MOVIE) "Films" else "Séries"
 
     Row(Modifier.fillMaxSize().background(Bg).padding(top = dpx(24))) {
@@ -173,14 +191,20 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
             contentPadding = PaddingValues(start = dpx(20), end = dpx(12), bottom = dpx(40)),
             verticalArrangement = Arrangement.spacedBy(dpx(4)),
         ) {
-            itemsIndexed(cats, key = { _, it -> it.key }) { _, cat ->
-                val own = remember { FocusRequester() }
-                CategoryRow(
-                    cat.title, cat.count, cat.locked, cat.key == selected,
-                    Modifier.focusRequester(if (cat.key == selected) catFocus else own),
-                    onFocus = { if (!cat.locked) focusedCat = cat.key },
-                    onClick = { gate(cat.locked) { vm.select(cat.key) } },
-                )
+            itemsIndexed(lines, key = { _, it -> it.key }) { index, line ->
+                when (line) {
+                    is VodCategoryLine.Header -> SectionHeader(line.section.label, first = index == 0)
+                    is VodCategoryLine.Entry -> {
+                        val cat = line.category
+                        val own = remember { FocusRequester() }
+                        CategoryRow(
+                            cat.title, cat.count, cat.locked, cat.key == selected,
+                            Modifier.focusRequester(if (cat.key == selected) catFocus else own),
+                            onFocus = { if (!cat.locked) focusedCat = cat.key },
+                            onClick = { gate(cat.locked) { vm.select(cat.key) } },
+                        )
+                    }
+                }
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(start = dpx(16), end = dpx(36))) {
@@ -208,14 +232,27 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                     }
                 }
             }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            // Bandeau du titre sélectionné : il change après un court arrêt, pas à chaque appui sur la flèche.
+            val list0 = shown
+            if (spotlightOn && list0 != null) {
+                val pick = remember(list0, selected) { vodSpotlightPick(list0, selected) }
+                var spot by remember { mutableStateOf<VodCard?>(null) }
+                LaunchedEffect(focusedIndex, list0, pick) {
+                    val target = list0.getOrNull(focusedIndex) ?: pick
+                    if (spot != null && target != spot) delay(180)
+                    spot = target
+                }
+                spot?.let { TvSpotlight(it, Modifier.padding(top = dpx(16))) }
+            }
+            var gridFocused by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f).fillMaxWidth().onFocusChanged { gridFocused = it.hasFocus }) {
                 val list = shown
                 when {
                     list == null -> Unit
                     list.isEmpty() && loadingMore -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     list.isEmpty() && filtersOn -> EmptyState("Aucun titre avec ces filtres", "Choisis une autre note ou une autre période.", Icons.Default.Movie, Modifier.fillMaxSize())
                     list.isEmpty() -> EmptyState(emptyTitle(selected), if (selected == Repository.KEY_FAVORITES) "Ajoute un titre aux favoris depuis sa fiche." else "", Icons.Default.Movie, Modifier.fillMaxSize())
-                    else -> LazyVerticalGrid(
+                    else -> CompositionLocalProvider(LocalRowFocus provides gridFocused, LocalDimLevel provides 0.72f) { LazyVerticalGrid(
                         columns = GridCells.Fixed(GRID_COLUMNS),
                         state = grid,
                         modifier = Modifier.fillMaxSize().focusRestorer(),
@@ -235,7 +272,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                                 Box(Modifier.fillMaxWidth().height(dpx(120)), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(dpx(44))) }
                             }
                         }
-                    }
+                    } }
                 }
             }
         }
@@ -249,6 +286,57 @@ private fun emptyTitle(selected: String?) = when (selected) {
     else -> "Aucun contenu dans cette catégorie"
 }
 
+/** Titre d'une rubrique de la liste des catégories : « BIBLIOTHÈQUE », « GENRES », « CATÉGORIES ». */
+@Composable
+private fun SectionHeader(text: String, first: Boolean) {
+    Text(
+        text.uppercase(), color = Tok.TextLow.copy(alpha = 0.8f), fontSize = spx(14), fontWeight = FontWeight.Bold, letterSpacing = spx(2.2),
+        maxLines = 1, modifier = Modifier.padding(start = dpx(18), top = dpx(if (first) 2 else 22), bottom = dpx(8)),
+    )
+}
+
+/**
+ * Bandeau du titre sélectionné, au-dessus de la grille : image de fond fondue dans le fond de l'écran,
+ * note, année, genre, 4K, titre et deux lignes de résumé. Hauteur fixe : la grille ne saute pas d'un titre à l'autre.
+ */
+@Composable
+private fun TvSpotlight(card: VodCard, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(dpx(18))
+    val base = remember(card.title, card.genre) { posterColor(card.title, card.genre) }
+    Box(
+        modifier.fillMaxWidth().height(dpx(196)).clip(shape)
+            .background(Brush.linearGradient(listOf(lerp(base, Bg, 0.6f), Surf, Bg)))
+            .border(1.dp, Tok.Line, shape),
+    ) {
+        if (card.backdrop.isNotBlank()) {
+            AsyncImage(cardBackdrop(card.backdrop), null, Modifier.fillMaxHeight().fillMaxWidth(0.62f).align(Alignment.CenterEnd), contentScale = ContentScale.Crop)
+            Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to Bg, 0.42f to Bg.copy(alpha = 0.9f), 1f to Bg.copy(alpha = 0.1f))))
+        }
+        Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(base.copy(alpha = 0.3f), Color.Transparent), radius = 900f)))
+        Column(
+            Modifier.fillMaxHeight().fillMaxWidth(0.7f).padding(horizontal = dpx(30), vertical = dpx(20)),
+            verticalArrangement = Arrangement.spacedBy(dpx(8), Alignment.CenterVertically),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(12))) {
+                if (card.rating > 0f && card.rating <= 10f) {
+                    Icon(Icons.Default.Star, null, Modifier.size(dpx(20)), tint = Accent1)
+                    Text("%.1f".format(card.rating), color = Accent1, fontSize = spx(16), fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                val meta = vodCardMeta(card.year, card.genre)
+                if (meta.isNotBlank()) Text(meta, color = Tok.TextMid, fontSize = spx(16), maxLines = 1)
+                if (card.uhd) {
+                    Text(
+                        "4K", color = Color.White, fontSize = spx(13), fontWeight = FontWeight.Bold, maxLines = 1,
+                        modifier = Modifier.border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(dpx(5))).padding(horizontal = dpx(7), vertical = dpx(1)),
+                    )
+                }
+            }
+            Text(card.title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (card.plot.isNotBlank()) Text(card.plot, color = Tok.TextMid, fontSize = spx(16), lineHeight = spx(22), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 @Composable
 internal fun CategoryRow(title: String, count: Int, locked: Boolean, selected: Boolean, modifier: Modifier, onFocus: () -> Unit, onClick: () -> Unit) {
     var f by remember { mutableStateOf(false) }
@@ -256,7 +344,8 @@ internal fun CategoryRow(title: String, count: Int, locked: Boolean, selected: B
     val ink = if (f) Tok.FocusInk else if (selected) Accent1 else Color.White
     Row(
         modifier.fillMaxWidth().height(dpx(58)).clip(shape)
-            .background(if (f) Tok.FocusFill else if (selected) Accent1.copy(alpha = .16f) else Color.Transparent)
+            .background(if (f) Tok.FocusFill else if (selected) Accent1.copy(alpha = .14f) else Color.Transparent)
+            .then(if (selected && !f) Modifier.border(1.dp, Accent1.copy(alpha = .4f), shape) else Modifier)
             .onFocusChanged {
                 if (it.isFocused != f) {
                     f = it.isFocused
@@ -273,6 +362,11 @@ internal fun CategoryRow(title: String, count: Int, locked: Boolean, selected: B
         )
         when {
             locked -> Icon(Icons.Default.Lock, "Verrouillé", Modifier.size(dpx(24)), tint = if (f) Tok.FocusInk else VyzoColors.Amber)
+            // La catégorie ouverte montre son nombre de titres dans une pastille de l'accent.
+            count >= 0 && selected && !f -> Text(
+                "$count", color = Look.onAccent, fontSize = spx(14), fontWeight = FontWeight.Bold, maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Accent1).padding(horizontal = dpx(10), vertical = dpx(2)),
+            )
             count >= 0 -> Text("$count", color = if (f) Tok.FocusInk.copy(alpha = 0.7f) else Tok.TextLow, fontSize = spx(16), maxLines = 1)
         }
     }

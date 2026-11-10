@@ -151,6 +151,8 @@ data class AppSettings(
     val lastExpiryWarning: Long = 0,
     /** Films et séries : regrouper les titres par genre (Action, Comédie…) quel que soit le nom des catégories du fournisseur. */
     val autoGenres: Boolean = true,
+    /** Films et séries : bandeau du titre mis en avant au-dessus des affiches (sur TV, il suit la sélection). */
+    val vodSpotlight: Boolean = true,
     /** Piste audio et sous-titres choisis pour chaque série (identifiant de la série → choix), réappliqués à l'épisode suivant. */
     val seriesTracks: Map<String, SeriesTracks> = emptyMap(),
     /** Écran ouvert au lancement : LIVE (TV en direct) ou HOME (accueil). */

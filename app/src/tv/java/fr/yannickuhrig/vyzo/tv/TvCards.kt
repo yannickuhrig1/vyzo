@@ -3,6 +3,8 @@
 package fr.yannickuhrig.vyzo.tv
 
 import fr.yannickuhrig.vyzo.ui.common.colorFor
+import fr.yannickuhrig.vyzo.ui.common.PosterTitleArt
+import androidx.compose.ui.draw.shadow
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
@@ -96,6 +98,9 @@ fun cardGrid(contentW: Dp): CardGrid {
 
 /** Vrai tant que la rangée de la carte a le focus : les autres cartes s'effacent alors un peu. */
 val LocalRowFocus = compositionLocalOf { false }
+
+/** Luminosité des cartes voisines quand leur rangée a le focus (1 : aucune atténuation). */
+val LocalDimLevel = compositionLocalOf { 0.5f }
 
 /** Carte à resélectionner au retour d'une fiche : la télécommande reprend là où elle était. */
 object LastFocus {
@@ -204,6 +209,8 @@ internal fun CardFrame(
     onFocus: () -> Unit,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    /** Contour coloré à la sélection, avec un halo de la même couleur (sinon contour blanc et ombre noire). */
+    ring: Color? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var f by remember { mutableStateOf(false) }
@@ -211,11 +218,16 @@ internal fun CardFrame(
     val s by animateFloatAsState(if (f) focusScale(focusScaleTarget) else 1f, label = "card")
     val shape = RoundedCornerShape(dpx(radius))
     val rowF = LocalRowFocus.current
-    val dimA by animateFloatAsState(if (rowF && !f) 0.5f else 1f, tween(if (Look.motion == 0) 0 else 320), label = "dim")
+    val dimTo = LocalDimLevel.current
+    val dimA by animateFloatAsState(if (rowF && !f) dimTo else 1f, tween(if (Look.motion == 0) 0 else 320), label = "dim")
     Box(
-        modifier.graphicsLayer { scaleX = s; scaleY = s }.focusGlow(f, shape).clip(shape)
+        modifier.graphicsLayer { scaleX = s; scaleY = s }
+            .then(if (ring != null) Modifier.ringGlow(f, shape, ring) else Modifier.focusGlow(f, shape)).clip(shape)
             .background(background)
-            .border(if (f) 2.dp else 1.dp, if (f) FocusBorder else RestBorder, shape)
+            .border(
+                if (f) (if (ring != null) maxOf(dpx(4), 2.dp) else 2.dp) else 1.dp,
+                if (f) (if (ring != null) SolidColor(ring) else FocusBorder) else RestBorder, shape,
+            )
             .onFocusChanged {
                 if (it.isFocused != f) {
                     f = it.isFocused
@@ -242,20 +254,23 @@ internal fun CardFrame(
     }
 }
 
+/** Halo de la couleur du contour autour de la carte sélectionnée. */
+private fun Modifier.ringGlow(focused: Boolean, shape: androidx.compose.ui.graphics.Shape, color: Color): Modifier =
+    if (!focused) this else this.shadow(dpx(30), shape, clip = false, ambientColor = color, spotColor = color)
+
 private fun artBackground(title: String) = Brush.linearGradient(listOf(colorFor(title).copy(alpha = .75f), Surf2))
 
 /** Affiche sans texte. Le remplaçant reste dessous : il apparaît si l'image manque ou ne se charge pas. */
 @Composable
 fun PosterTile(item: VodItem, modifier: Modifier, onFocus: () -> Unit, onClick: () -> Unit, titleInside: Boolean = true) {
-    CardFrame(modifier.aspectRatio(2f / 3f), artBackground(item.title), 1.07f, 8, onFocus, onClick) { focused ->
+    CardFrame(modifier.aspectRatio(2f / 3f), artBackground(item.title), 1.07f, 8, onFocus, onClick, ring = Accent1) { focused ->
         val caption = focused && titleInside
-        ArtPlaceholder(item.title, item.kind, Modifier.fillMaxSize(), showTitle = titleInside && !caption)
+        // Sans image : une affiche dessinée, teintée par le genre, avec le titre en capitales (caché sous la légende).
+        PosterTitleArt(item.title, item.genre, Modifier.fillMaxSize(), showTitle = !caption)
         if (item.poster.isNotBlank()) AsyncImage(item.poster, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        Row(Modifier.align(Alignment.TopStart).padding(dpx(8)), horizontalArrangement = Arrangement.spacedBy(dpx(5))) {
-            // Quand le titre est sous l'affiche, la note y est déjà. Certains catalogues donnent des notes hors échelle.
-            if (titleInside && item.rating > 0f && item.rating <= 10f) CardBadge("★ %.1f".format(item.rating), Accent1)
-            if (item.uhd) CardBadge("4K", Color.White)
-        }
+        if (item.uhd) CardBadge("4K", Color.White, Modifier.align(Alignment.TopStart).padding(dpx(8)))
+        // Certains catalogues donnent des notes hors échelle.
+        if (item.rating > 0f && item.rating <= 10f) CardBadge("★ %.1f".format(item.rating), Accent1, Modifier.align(Alignment.TopEnd).padding(dpx(8)))
         if (caption) PosterCaption(item, Modifier.align(Alignment.BottomStart))
     }
 }
@@ -265,7 +280,8 @@ fun PosterTile(item: VodItem, modifier: Modifier, onFocus: () -> Unit, onClick: 
 private fun CardBadge(text: String, color: Color, modifier: Modifier = Modifier) {
     Text(
         text, color = color, fontSize = spx(13), lineHeight = spx(16), fontWeight = FontWeight.Bold, maxLines = 1,
-        modifier = modifier.background(Color(0xB3000000), RoundedCornerShape(dpx(5))).padding(horizontal = dpx(6), vertical = dpx(2)),
+        modifier = modifier.background(Color(0x99000000), RoundedCornerShape(dpx(6)))
+            .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(dpx(6))).padding(horizontal = dpx(7), vertical = dpx(2)),
     )
 }
 

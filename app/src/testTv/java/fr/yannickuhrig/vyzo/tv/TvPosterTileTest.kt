@@ -50,10 +50,15 @@ class TvPosterTileTest : ScreensBase() {
         compose.onNodeWithText("4K").assertExists()
     }
 
-    @Test fun sousUneAfficheTitreeLaNoteNEstPasRepeteeMaisLe4kReste() {
+    @Test fun sousUneAfficheTitreeLaNoteEtLe4kRestentSurLAffiche() {
         show(film(rating = 8.4f, uhd = true), titleInside = false)
-        compose.onAllNodesWithText("★", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("★", substring = true).assertCountEquals(1)
         compose.onNodeWithText("4K").assertExists()
+    }
+
+    @Test fun sansImageLAfficheEstDessineeAvecLeTitre() {
+        show(film(), titleInside = false)
+        compose.onNodeWithText("DUNE").assertExists()
     }
 
     @Test fun uneNoteHorsEchelleNEstPasAffichee() {

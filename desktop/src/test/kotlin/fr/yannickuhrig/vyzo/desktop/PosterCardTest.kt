@@ -75,9 +75,9 @@ class PosterCardTest {
     }
 
     @Test
-    fun uneAfficheManquanteMontreLesInitialesDuTitre() {
+    fun uneAfficheManquanteEstDessineeAvecLeTitre() {
         show(cards = arrayOf(card("Canal Quatre")))
-        rule.onNodeWithText("CQ", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("CANAL QUATRE", useUnmergedTree = true).assertExists()
     }
 
     @Test

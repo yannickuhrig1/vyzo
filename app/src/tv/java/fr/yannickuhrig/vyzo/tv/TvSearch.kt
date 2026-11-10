@@ -2,6 +2,7 @@
 // Modifié pour Vyzo le 2026-11-08 : recherche de Vyzo (profils, contrôle parental, guide TV), le clavier ne s'ouvre qu'à la demande.
 package fr.yannickuhrig.vyzo.tv
 
+import fr.yannickuhrig.vyzo.ui.vod.vodCardMeta
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -261,20 +262,21 @@ private fun RowHeading(title: String, count: Int?) {
 }
 
 /** Année et note sous une affiche ; vide si le catalogue ne les donne pas. */
-internal fun posterCaption(year: String, rating: Float): String =
-    listOfNotNull(year.take(4).takeIf { it.isNotBlank() }, if (rating > 0f) "★ %.1f".format(rating) else null).joinToString(" · ")
-
-/** Affiche, puis titre et année dessous : à 3 m, une affiche seule ne dit pas toujours quel film c'est. */
+/** Affiche, puis titre, année et genre dessous : à 3 m, une affiche seule ne dit pas toujours quel film c'est. */
 @Composable
 internal fun TitledPoster(item: VodItem, modifier: Modifier, onFocus: () -> Unit = {}, onClick: () -> Unit, requester: FocusRequester? = null) {
-    Column(modifier) {
+    var f by remember { mutableStateOf(false) }
+    Column(modifier.onFocusChanged { f = it.hasFocus }) {
         PosterTile(
             item,
             Modifier.fillMaxWidth().restoreFocus(item.key).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
             onFocus, onClick, titleInside = false,
         )
-        Text(item.title, color = Tok.TextHi, fontSize = spx(15), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = dpx(10)))
-        Text(posterCaption(item.year, item.rating), color = Tok.TextLow, fontSize = spx(13), maxLines = 1)
+        Text(
+            item.title, color = if (f) Accent1 else Tok.TextHi, fontSize = spx(15), fontWeight = FontWeight.SemiBold, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = dpx(12)),
+        )
+        Text(vodCardMeta(item.year, item.genre), color = Tok.TextLow, fontSize = spx(13), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

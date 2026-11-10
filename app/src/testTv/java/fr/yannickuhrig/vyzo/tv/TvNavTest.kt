@@ -106,9 +106,9 @@ class TvNavLogicTest {
     }
 
     @Test fun `legende d une affiche`() {
-        assertEquals("2016 · ★ 7.6", posterCaption("2016-05-01", 7.6f).replace(',', '.'))
-        assertEquals("2016", posterCaption("2016", 0f))
-        assertEquals("", posterCaption("", 0f))
+        assertEquals("2016 · Drame", fr.yannickuhrig.vyzo.ui.vod.vodCardMeta("2016-05-01", "Drame"))
+        assertEquals("2016", fr.yannickuhrig.vyzo.ui.vod.vodCardMeta("2016", ""))
+        assertEquals("", fr.yannickuhrig.vyzo.ui.vod.vodCardMeta("", ""))
     }
 
     @Test fun `titres d un acteur`() {
@@ -391,8 +391,8 @@ class TvNavScreenTest : ScreensBase() {
         }
         compose.waitUntil(5000) { compose.onAllNodesWithText("1 titre dans ton abonnement").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Le Bureau des légendes").fetchSemanticsNode()
-        // Sans image, l'affiche montre les initiales : c'est elle qui se valide, pas le titre écrit dessous.
-        compose.onNodeWithText("LB").performClick()
+        // Sans image, l'affiche est dessinée avec le titre en capitales : c'est elle qui se valide, pas le titre écrit dessous.
+        compose.onNodeWithText("LE BUREAU DES LÉGENDES").performClick()
         compose.waitForIdle()
         assertTrue("$opened", opened?.endsWith(":S:701") == true)
         compose.onAllNodes(isRoot()).onLast().captureRoboImage("screenshots/tv_27_acteur.png")
