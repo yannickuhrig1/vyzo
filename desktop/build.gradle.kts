@@ -129,6 +129,8 @@ compose.desktop {
             macOS {
                 bundleID = "fr.yannickuhrig.vyzo"
                 packageName = "Vyzo"
+                // macOS n'accepte que des chiffres : une bêta (« 1.12.0-beta1 ») y devient 1.12.0.
+                packageVersion = appVersion.substringBefore('-')
                 appCategory = "public.app-category.video"
                 val icns = project.file("packaging/vyzo.icns")
                 if (icns.exists()) {
