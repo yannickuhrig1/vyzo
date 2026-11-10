@@ -120,6 +120,7 @@ class AppContainer(
         scope.launch { runCatching { parental.refreshAdultFlags() } }
         scope.launch { runCatching { metadataCache.purge() } }
         scope.launch { runCatching { trakt.syncIfDue() } }
+        scope.launch { runCatching { settings.update { it.withForYouRow() } } }
         scope.launch {
             settings.flow.map { it.diagnosticLog }.distinctUntilChanged().collect { DiagLog.enabled = it }
         }

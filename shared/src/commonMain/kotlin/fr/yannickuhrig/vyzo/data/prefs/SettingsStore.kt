@@ -162,6 +162,8 @@ data class AppSettings(
     val homeRows: List<String> = fr.yannickuhrig.vyzo.data.home.HomeRows.DEFAULT,
     /** Accueil propre à un profil : identifiant du profil → ses rangées. */
     val homeRowsByProfile: Map<String, List<String>> = emptyMap(),
+    /** La rangée « Pour toi » a déjà été ajoutée une fois aux accueils existants (on ne la remet pas si on l'enlève). */
+    val forYouRowAdded: Boolean = false,
     /** Accueil : horloge et date en haut à droite. */
     val homeClock: Boolean = true,
     /** Accueil : l'arrière-plan fait défiler les affiches tant qu'on ne parcourt pas les rangées. */
@@ -213,6 +215,13 @@ data class AppSettings(
     fun withHomeRows(profileId: String, transform: (List<String>) -> List<String>): AppSettings =
         if (profileId.isBlank()) copy(homeRows = transform(homeRows))
         else copy(homeRowsByProfile = homeRowsByProfile + (profileId to transform(homeRowsFor(profileId))))
+
+    /** Ajoute une seule fois « Pour toi » à tous les accueils déjà en place. */
+    fun withForYouRow(): AppSettings {
+        if (forYouRowAdded) return this
+        val add = fr.yannickuhrig.vyzo.data.home.HomeRows::withForYou
+        return copy(homeRows = add(homeRows), homeRowsByProfile = homeRowsByProfile.mapValues { add(it.value) }, forYouRowAdded = true)
+    }
 
     /** Donne l'accueil du profil [profileId] à tous les profils (il devient la mise en page commune). */
     fun shareHomeOf(profileId: String): AppSettings = copy(homeRows = homeRowsFor(profileId), homeRowsByProfile = emptyMap())

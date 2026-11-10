@@ -29,6 +29,10 @@ import fr.yannickuhrig.vyzo.data.profile.ProfileManager
 import fr.yannickuhrig.vyzo.data.source.xtream.XtreamClient
 import fr.yannickuhrig.vyzo.data.sync.SyncManager
 import fr.yannickuhrig.vyzo.data.vod.Genres
+import fr.yannickuhrig.vyzo.data.vod.RecoCandidate
+import fr.yannickuhrig.vyzo.data.vod.RecoTitle
+import fr.yannickuhrig.vyzo.data.vod.Recommendations
+import fr.yannickuhrig.vyzo.data.vod.TasteSignal
 import fr.yannickuhrig.vyzo.player.QualityVariants
 import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.data.vod.announcesUhd
@@ -890,6 +894,82 @@ class Repository(
         return matchCatalog(titles, limit, { db.series().matchingName(sc.pids, sc.hide, it) }, { it.name }, { it.yearInt }, { it.uid })
     }
 
+    /**
+     * « Pour toi » : films et séries pas encore commencés, choisis d'après ce que le profil actif regarde
+     * (voir [Recommendations]). Calculé sur l'appareil ; vide tant que le profil n'a rien regardé.
+     */
+    fun forYou(limit: Int = 30): Flow<List<RecoTitle>> = viewScope.flatMapLatest { sc ->
+        if (sc.pids.isEmpty() || sc.profileId.isBlank()) return@flatMapLatest flowOf(emptyList())
+        val taste = combine(
+            db.progress().observeForProfile(sc.profileId),
+            db.movies().inUserGroup(FAVORITES_GROUP_ID, sc.profileId, sc.pids, sc.hide),
+            db.series().inUserGroup(FAVORITES_GROUP_ID, sc.profileId, sc.pids, sc.hide),
+        ) { progress, favMovies, favSeries ->
+            // Jour courant seulement : la progression enregistrée pendant la lecture ne relance pas tout le calcul.
+            val today = System.currentTimeMillis() / 86_400_000L * 86_400_000L
+            val signals = Recommendations.signalsFromProgress(progress, today) +
+                favMovies.map { TasteSignal(ContentKind.MOVIE, it.uid, Recommendations.FAVORITE_WEIGHT) } +
+                favSeries.map { TasteSignal(ContentKind.SERIES, it.uid, Recommendations.FAVORITE_WEIGHT) }
+            val seen = HashSet<String>()
+            progress.forEach { p ->
+                if (p.kind == ContentKind.MOVIE && p.uid.isNotBlank()) seen += Recommendations.key(ContentKind.MOVIE, p.uid)
+                if (p.kind == ContentKind.SERIES && p.parentUid.isNotBlank()) seen += Recommendations.key(ContentKind.SERIES, p.parentUid)
+            }
+            favMovies.forEach { seen += Recommendations.key(ContentKind.MOVIE, it.uid) }
+            favSeries.forEach { seen += Recommendations.key(ContentKind.SERIES, it.uid) }
+            signals.map { it.copy(weight = Math.round(it.weight * 10) / 10.0) } to seen
+        }.distinctUntilChanged()
+        combine(taste, vodGenres(ContentKind.MOVIE), vodGenres(ContentKind.SERIES)) { t, movieIdx, seriesIdx -> Triple(t, movieIdx, seriesIdx) }
+            .mapLatest { (t, movieIdx, seriesIdx) -> recommend(t.first, t.second, movieIdx, seriesIdx, limit) }
+            .flowOn(Dispatchers.Default)
+    }
+
+    private suspend fun recommend(
+        signals: List<TasteSignal>,
+        seen: Set<String>,
+        movieIdx: Map<String, List<String>>,
+        seriesIdx: Map<String, List<String>>,
+        limit: Int,
+    ): List<RecoTitle> {
+        if (signals.isEmpty()) return emptyList()
+        val movieGenres = invert(movieIdx)
+        val seriesGenres = invert(seriesIdx)
+        fun genresOf(kind: ContentKind, uid: String): Set<String> =
+            (if (kind == ContentKind.MOVIE) movieGenres[uid] else seriesGenres[uid]).orEmpty()
+        val affinity = Recommendations.genreAffinity(signals, ::genresOf)
+        if (affinity.isEmpty()) return emptyList()
+        // Seuls les genres aimés fournissent des candidats, et seulement leurs titres les plus récents :
+        // on ne relit pas tout le catalogue à chaque fois.
+        val liked = affinity.entries.sortedByDescending { it.value }.take(RECO_GENRES).map { it.key }
+        fun pool(idx: Map<String, List<String>>) =
+            liked.flatMap { idx[it].orEmpty().take(RECO_PER_GENRE) }.distinct()
+        val movies = withContext(Dispatchers.IO) {
+            loadInOrder(pool(movieIdx).filter { Recommendations.key(ContentKind.MOVIE, it) !in seen }, MovieEntity::uid) { db.movies().byUids(it) }
+        }
+        val series = withContext(Dispatchers.IO) {
+            loadInOrder(pool(seriesIdx).filter { Recommendations.key(ContentKind.SERIES, it) !in seen }, SeriesEntity::uid) { db.series().byUids(it) }
+        }
+        val added = movies.map { it.addedAt } + series.map { it.addedAt }
+        val oldest = added.minOrNull() ?: 0L
+        val span = ((added.maxOrNull() ?: 0L) - oldest).coerceAtLeast(1L).toDouble()
+        fun fresh(at: Long) = if (at <= 0L) 0.0 else (at - oldest) / span
+        val candidates = movies.map { RecoCandidate(ContentKind.MOVIE, it.uid, genresOf(ContentKind.MOVIE, it.uid), it.rating, fresh(it.addedAt)) } +
+            series.map { RecoCandidate(ContentKind.SERIES, it.uid, genresOf(ContentKind.SERIES, it.uid), it.rating, fresh(it.addedAt)) }
+        val movieByUid = movies.associateBy { it.uid }
+        val seriesByUid = series.associateBy { it.uid }
+        return Recommendations.rank(candidates, affinity, seen, limit).mapNotNull { c ->
+            if (c.kind == ContentKind.MOVIE) movieByUid[c.uid]?.let { RecoTitle.Movie(it) }
+            else seriesByUid[c.uid]?.let { RecoTitle.Series(it) }
+        }
+    }
+
+    /** genre → titres devient titre → genres. */
+    private fun invert(idx: Map<String, List<String>>): Map<String, Set<String>> {
+        val out = HashMap<String, MutableSet<String>>()
+        for ((g, uids) in idx) for (u in uids) out.getOrPut(u) { HashSet(2) } += g
+        return out
+    }
+
     private suspend fun <T> matchCatalog(
         titles: List<TmdbTitle>,
         limit: Int,
@@ -1019,6 +1099,9 @@ class Repository(
         const val KEY_TOP_RATED = "top"
         /** Genre automatique : « genre:action », « genre:comedie »… (voir [Genres]). */
         const val GENRE_PREFIX = "genre:"
+        /** « Pour toi » : genres aimés qui fournissent des candidats, et titres récents lus par genre. */
+        private const val RECO_GENRES = 6
+        private const val RECO_PER_GENRE = 250
         const val MIME_HLS = "application/x-mpegURL"
         const val STALKER_UA =
             "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3"

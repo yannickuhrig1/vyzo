@@ -15,6 +15,7 @@ import fr.yannickuhrig.vyzo.data.sport.EspnGame
 import fr.yannickuhrig.vyzo.data.sport.SportLineup
 import fr.yannickuhrig.vyzo.data.sport.matchScores
 import fr.yannickuhrig.vyzo.data.trakt.TraktList
+import fr.yannickuhrig.vyzo.data.vod.RecoTitle
 import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.ui.sport.toOnAir
 import fr.yannickuhrig.vyzo.data.weather.Weather
@@ -126,6 +127,17 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private fun traktSeries(list: TraktList): Flow<List<HomeItem>> =
         combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.trakt.titles(list)) }, quality) { l, q -> l.map { it.toItem(q) } }
 
+    /** « Pour toi » : calcul local d'après l'historique et les favoris du profil. */
+    private fun forYou(): Flow<List<HomeItem>> =
+        combine(c.repo.forYou(MAX_ITEMS), quality) { l, q ->
+            l.map {
+                when (it) {
+                    is RecoTitle.Movie -> it.movie.toItem(q)
+                    is RecoTitle.Series -> it.series.toItem(q)
+                }
+            }
+        }
+
     private fun Flow<List<HomeItem>>.withProgress(): Flow<List<HomeItem>> =
         combine(c.repo.resumeFractions()) { items, done ->
             items.map { if (it is VodItem) it.copy(progress = done[it.uid] ?: 0f) else it }
@@ -172,6 +184,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         id == HomeRows.SPORT_LIVE -> sportLive()
         id == HomeRows.CONTINUE_SERIES -> series(Repository.KEY_CONTINUE).withProgress()
         id == HomeRows.CONTINUE_MOVIES -> movies(Repository.KEY_CONTINUE).withProgress()
+        id == HomeRows.FOR_YOU -> forYou()
         id == HomeRows.FAV_CHANNELS -> channels(Repository.KEY_FAVORITES)
         id == HomeRows.RECENT_CHANNELS -> channels(Repository.KEY_RECENT)
         id == HomeRows.ADDED_MOVIES -> movies(Repository.KEY_RECENT_ADDED)
