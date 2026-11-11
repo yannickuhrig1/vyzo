@@ -172,16 +172,22 @@ fun vodCategoryLines(cats: List<VodCategory>): List<VodCategoryLine> = buildList
     }
 }
 
+/** Le titre a de quoi remplir le bandeau : une image de fond ou un résumé. */
+fun VodCard.fillsSpotlight(): Boolean = backdrop.isNotBlank() || plot.isNotBlank()
+
 /**
  * Titre du bandeau tant que rien n'est sélectionné : le premier de « Reprendre » (le plus récent),
- * ailleurs le mieux noté qui a une image de fond. Rien sous 3 titres, le bandeau répéterait la grille.
+ * ailleurs le mieux noté qui a une image de fond, sinon un résumé. Pas de bandeau sous 3 titres (il répéterait
+ * la grille), ni quand aucun titre n'a d'image de fond ou de résumé (il n'afficherait qu'un nom sur un aplat).
  */
-fun vodSpotlightPick(items: List<VodCard>, selected: String?): VodCard? = when {
-    items.size < 3 -> null
-    selected == Repository.KEY_CONTINUE -> items.first()
-    else -> items.filter { it.backdrop.isNotBlank() && it.rating <= 10f }.maxByOrNull { it.rating }
-        ?: items.filter { it.rating <= 10f }.maxByOrNull { it.rating }
-        ?: items.first()
+fun vodSpotlightPick(items: List<VodCard>, selected: String?): VodCard? {
+    if (items.size < 3) return null
+    val rich = items.filter { it.fillsSpotlight() }
+    if (rich.isEmpty()) return null
+    if (selected == Repository.KEY_CONTINUE) return rich.first()
+    return rich.filter { it.backdrop.isNotBlank() && it.rating <= 10f }.maxByOrNull { it.rating }
+        ?: rich.filter { it.rating <= 10f }.maxByOrNull { it.rating }
+        ?: rich.first()
 }
 
 /** « 2026 · Comédie » : année et genre sous une affiche. */

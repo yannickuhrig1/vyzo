@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
@@ -62,6 +63,8 @@ data class UpdateInfo(
     val msi: String = "",
     val msiSha256: String = "",
     val msiParts: Int = 0,
+    /** Version lue sur GitHub : [versionCode] y est calculé depuis le nom, pas le vrai numéro de l'appli. */
+    @Transient val fromGitHub: Boolean = false,
 ) {
     /** Adresses à télécharger dans l'ordre pour obtenir [base] (en morceaux si [parts] > 0). */
     fun partsOf(base: String, parts: Int): List<String> =
@@ -161,12 +164,7 @@ class AppUpdater(
         }
     }
 
-    private fun isNewer(info: UpdateInfo): Boolean {
-        val cmp = VersionCompare.compare(info.versionName, platform.appVersion)
-        if (cmp > 0) return true
-        if (cmp < 0) return false
-        return info.versionCode > platform.appVersionCode
-    }
+    private fun isNewer(info: UpdateInfo): Boolean = isNewer(info, platform.appVersion, platform.appVersionCode)
 
     private suspend fun checkGitHub(s: AppSettings): UpdateInfo? = runCatching {
         val headers = mutableMapOf(
@@ -209,7 +207,8 @@ class AppUpdater(
             debSha256 = debSha,
             msi = downloadUrl(msiAsset),
             msiSha256 = msiSha,
-            notes = best.body.ifBlank { best.name },
+            notes = plainNotes(best.body).ifBlank { best.name },
+            fromGitHub = true,
         )
     }.getOrNull()
 
@@ -307,6 +306,27 @@ class AppUpdater(
         /** latest.json ne pèse que quelques centaines d'octets : une heure suffit pour qu'une version publiée arrive vite partout. */
         const val AUTO_CHECK_INTERVAL_MS = 3_600_000L
         const val GITHUB_RELEASES_URL = "https://api.github.com/repos/yannickuhrig1/vyzo/releases"
+
+        /**
+         * [info] est plus récente que la version installée ([appVersion], [appVersionCode]). À nom égal, seul le vrai
+         * numéro de latest.json départage : celui calculé depuis un nom GitHub ne se compare pas à celui de l'appli.
+         */
+        fun isNewer(info: UpdateInfo, appVersion: String, appVersionCode: Int): Boolean {
+            val cmp = VersionCompare.compare(info.versionName, appVersion)
+            if (cmp != 0) return cmp > 0
+            return !info.fromGitHub && info.versionCode > appVersionCode
+        }
+
+        /** Notes d'une release GitHub, écrites en markdown, remises en texte simple pour la fenêtre de mise à jour. */
+        fun plainNotes(markdown: String): String = markdown.replace("\r\n", "\n").lines().joinToString("\n") { raw ->
+            var line = raw.trimEnd()
+            line = line.replace(Regex("^#{1,6}\\s+"), "")
+            line = line.replace(Regex("^(\\s*)[-*+]\\s+"), "$1• ")
+            line = line.replace(Regex("!?\\[([^\\]]*)]\\([^)]*\\)"), "$1")
+            line = line.replace(Regex("(\\*\\*|__)(.+?)\\1"), "$2")
+            line = line.replace(Regex("(?<![\\w*])[*_](\\S(?:.*?\\S)?)[*_](?![\\w*])"), "$1")
+            line.replace("`", "")
+        }.replace(Regex("\n{3,}"), "\n\n").trim()
 
         fun resolve(base: String, ref: String): String = when {
             ref.startsWith("http://") || ref.startsWith("https://") -> ref

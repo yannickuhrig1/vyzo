@@ -234,8 +234,9 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
             }
             // Bandeau du titre sélectionné : il change après un court arrêt, pas à chaque appui sur la flèche.
             val list0 = shown
-            if (spotlightOn && list0 != null) {
-                val pick = remember(list0, selected) { vodSpotlightPick(list0, selected) }
+            val pick = remember(list0, selected) { list0?.let { vodSpotlightPick(it, selected) } }
+            // Sans titre à montrer dans la liste (ni image de fond ni résumé), pas de bandeau du tout.
+            if (spotlightOn && list0 != null && pick != null) {
                 var spot by remember { mutableStateOf<VodCard?>(null) }
                 LaunchedEffect(focusedIndex, list0, pick) {
                     val target = list0.getOrNull(focusedIndex) ?: pick
