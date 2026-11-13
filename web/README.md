@@ -6,6 +6,8 @@ canal temps réel privé `user:<uid>`. L'adresse et la clé publique Supabase vi
 
 ## Sections
 
+- **Accueil** : chiffres clés (appareils en ligne, abonnements, profils, enregistrements), « Reprendre » du profil
+  choisi, appareils et prochains enregistrements.
 - **Profils** : créer, renommer, couleur, profil enfant, code à 4 chiffres (même empreinte que `ProfileManager.hashPin`),
   ordre, suppression (le déclencheur `vyzo_profile_deleted` efface aussi progression et listes côté serveur).
 - **Appareils** : table `devices`, remplie par chaque appli à la synchro (`CloudSync.reportDevice`, au plus toutes les
@@ -23,6 +25,18 @@ canal temps réel privé `user:<uid>`. L'adresse et la clé publique Supabase vi
   `history_clear`, comme `CloudSync.deleteCloudHistory`.
 - **Listes** : favoris (`fav`) et listes `user_lists` du profil ; créer, renommer, supprimer une liste, retirer un élément.
 - **Enregistrements** : table `recordings`, annulation ou arrêt (statut `CANCELLED`), retrait de la liste.
+- **Contrôle parental** : ligne `sealed_items` `parental`/`main` (`SealedParental` : empreinte du code comme
+  `ParentalControl.hashParental`, détection adulte, code pour quitter un profil enfant). Tant qu'elle n'existe pas,
+  chaque appareil garde son code ; ensuite le réglage suit le compte. Catégories : ligne `catalog` (liste envoyée par
+  l'appli) et ligne `prefs` de l'abonnement, réécrite en gardant masquage, ordre, noms et chaînes.
+- **Sécurité** : changement de mot de passe (la clé du compte est rechiffrée, même `keyId`), fermeture des autres
+  sessions, clé gardée sur cet ordinateur, thème (Sobre, Cinéma, Clair, gardé dans `localStorage`).
+
+Autour : recherche `Ctrl K` (pages, actions, appareils, abonnements, profils, titres chargés) ; les suppressions
+simples (titre, élément de liste, liste, abonnement, appareil, enregistrement terminé) partent après 6 s, « Annuler »
+les rétablit ; « Lancer sur… » envoie `cast_command` avec `contentKey` à un appareil (Vyzo 1.13.0-beta2 et plus, qui le
+traduit en uid local : `castTarget` dans `DeepLink.kt`) ; l'état des abonnements vient de la ligne `status` écrite par
+l'appli après chaque vérification chez le fournisseur.
 
 Concordance avec l'appli : `src/vault.test.ts` et `desktop/src/test/…/WebCompatTest.kt` vérifient les mêmes valeurs
 (identifiants d'abonnement, dérivation de clé, blocs chiffrés dans les deux sens).

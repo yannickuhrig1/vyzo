@@ -27,6 +27,7 @@ function contentSecurityPolicy(): Plugin {
     "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' data:",
+    "font-src 'self'",
     `connect-src https://${supabaseHost} wss://${supabaseHost}`,
     "manifest-src 'self'",
     "base-uri 'none'",

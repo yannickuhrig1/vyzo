@@ -708,6 +708,9 @@ class CloudSync(
 
     // ------------------------------------------------------------------ Appareils
 
+    /** Identifiant de cet appareil dans la table « devices » (celui que vise le site du compte). */
+    suspend fun thisDeviceId(): String = deviceId()
+
     private suspend fun deviceId(): String {
         if (myDeviceId.isNotBlank()) return myDeviceId
         var id = store.get().deviceId

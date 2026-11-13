@@ -1,11 +1,11 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
 import {
-  FAVORITES_LIST_ID, WEB_SENDER, nextUpdatedAt,
-  type ContentKind, type Device, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
+  FAVORITES_LIST_ID, WEB_SENDER, nextUpdatedAt, withCategoryLock,
+  type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
   type ProfileActivity, type ProgressItem, type Recording, type RecordingStatus, type UserList,
 } from './model'
 import {
-  context, metaContext, openText, parseMeta, parsePlaylist, playlistJson, playlistKey, seal, unwrapVault,
+  context, deriveKey, keyId, metaContext, openText, toBase64, parseMeta, parsePlaylist, playlistJson, playlistKey, seal, unwrapVault,
   type SealedMeta, type VaultRecord,
 } from './vault'
 import { forgetKey, hasRememberedKey, recallKey, rememberKey } from './keystore'
@@ -26,7 +26,11 @@ export type VaultStatus = 'open' | 'locked' | 'missing'
 export interface ListsData { lists: UserList[]; items: ListItem[] }
 
 /** Nouvelles valeurs d'un abonnement (sans identifiant : il se calcule). */
-export type PlaylistDraft = Omit<Playlist, 'id' | 'updatedAt' | 'hasPrefs'>
+export type PlaylistDraft = Omit<Playlist, 'id' | 'updatedAt' | 'hasPrefs' | 'status'>
+
+export interface CastItem { contentKey: string; itemType: string; title: string; positionMs: number }
+
+const EMPTY_PREFS: SealedPrefs = { categories: [], channels: [] }
 
 /** Accès aux données du compte. Deux versions : Supabase, et une démo en mémoire pour le développement. */
 export interface Backend {
@@ -45,6 +49,12 @@ export interface Backend {
   lockVault(): Promise<void>
   /** La clé du compte est gardée dans ce navigateur. */
   vaultRemembered(): Promise<boolean>
+  /** Nouveau mot de passe du compte ; la clé des données chiffrées est rechiffrée avec lui (même clé, mêmes appareils). */
+  changePassword(account: Account, current: string, next: string): Promise<void>
+  /** Oublie la clé gardée dans ce navigateur, sans verrouiller la page. */
+  forgetRemembered(): Promise<void>
+  /** Ferme toutes les autres sessions du compte (box, téléphones, PC, autres navigateurs). */
+  signOutOthers(): Promise<void>
 
   profiles(): Promise<Profile[]>
   saveProfiles(profiles: Profile[]): Promise<void>
@@ -72,6 +82,16 @@ export interface Backend {
   playlists(account: Account): Promise<Playlist[]>
   savePlaylist(account: Account, draft: PlaylistDraft, previous: Playlist | null, all: Playlist[]): Promise<void>
   deletePlaylist(account: Account, p: Playlist): Promise<void>
+
+  /** Ouvre un titre sur un appareil du compte (RealtimeClient : « cast_command » avec contentKey). */
+  castTo(account: Account, device: Device, item: CastItem): Promise<void>
+
+  /** Contrôle parental commun ; null : chaque appareil garde le sien. */
+  parental(account: Account): Promise<Parental | null>
+  saveParental(account: Account, value: Parental | null): Promise<void>
+  /** Catégories d'un abonnement (envoyées par un appareil) et préférences actuelles. */
+  catalog(account: Account, playlistId: string): Promise<{ entries: CatalogEntry[]; prefs: SealedPrefs }>
+  setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean): Promise<void>
 }
 
 /** Message d'erreur lisible, comme CloudApi.friendlyMessage. */
@@ -255,6 +275,49 @@ export class SupabaseBackend implements Backend {
 
   vaultRemembered(): Promise<boolean> {
     return hasRememberedKey()
+  }
+
+  async changePassword(account: Account, current: string, next: string): Promise<void> {
+    // Vérifie l'actuel en se reconnectant : une session ouverte ne suffit pas pour changer de mot de passe.
+    const check = await this.db.auth.signInWithPassword({ email: account.email, password: current })
+    if (check.error) throw new UserError('Mot de passe actuel incorrect')
+    const record = await this.vaultRecord()
+    let key = record ? await unwrapVault(record, current, account.userId) : null
+    // Reprise après un rechiffrement raté : le compte a déjà le nouveau mot de passe, la clé l'ancien. La clé ouverte
+    // dans cette page (même empreinte) suffit alors à finir le travail.
+    if (record && !key && this.vaultKey && this.vaultUser === account.userId && await keyId(this.vaultKey) === record.keyId) key = this.vaultKey
+    if (record && !key) throw new UserError('Le mot de passe actuel n’ouvre pas les données chiffrées du compte')
+    if (key) {
+      this.vaultKey = key
+      this.vaultUser = account.userId
+    }
+    const { error } = await this.db.auth.updateUser({ password: next })
+    if (error) throw error
+    if (!key) return
+    // Comme SealedSync.writeVault : nouveau sel, même clé. keyId ne change pas, les appareils restent ouverts.
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const iterations = 600_000
+    const kek = await deriveKey(next, salt, iterations)
+    const payload = JSON.stringify({
+      salt: toBase64(salt), iterations, wrapped: await seal(kek, key, context(account.userId, 'vault', 'key')), keyId: await keyId(key),
+    })
+    let last: unknown = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { error: e } = await this.db.from('sealed_items')
+        .upsert({ kind: 'vault', id: 'key', payload, updated_at: Date.now(), deleted: false }, { onConflict: 'user_id,kind,id' })
+      if (!e) return
+      last = e
+    }
+    throw new UserError(`Mot de passe changé, mais la clé n’a pas pu être rechiffrée (${friendlyError(last)}). Sans fermer cette page, recommence avec le nouveau mot de passe comme mot de passe actuel.`)
+  }
+
+  async forgetRemembered(): Promise<void> {
+    await forgetKey()
+  }
+
+  async signOutOthers(): Promise<void> {
+    const { error } = await this.db.auth.signOut({ scope: 'others' })
+    if (error) throw error
   }
 
   private key(account: Account): Uint8Array {
@@ -467,13 +530,22 @@ export class SupabaseBackend implements Backend {
   async playlists(account: Account): Promise<Playlist[]> {
     const key = this.key(account)
     const rows = await this.selectAll<SealedRow>('sealed_items', 'kind,id,payload,updated_at',
-      (q) => q.in('kind', ['playlist', 'prefs']).eq('deleted', false))
+      (q) => q.in('kind', ['playlist', 'prefs', 'status']).eq('deleted', false))
     const prefs = new Set(rows.filter((r) => r.kind === 'prefs').map((r) => r.id))
+    const statuses = new Map<string, PlaylistStatus>()
+    for (const r of rows.filter((x) => x.kind === 'status')) {
+      try {
+        const o = JSON.parse(await openText(key, r.payload, context(account.userId, 'status', r.id))) as Partial<PlaylistStatus>
+        statuses.set(r.id, { expiresAt: Number(o.expiresAt ?? 0), maxConnections: Number(o.maxConnections ?? 0), status: String(o.status ?? ''), checkedDay: Number(o.checkedDay ?? 0) })
+      } catch {
+        // Illisible : simplement pas d'état affiché.
+      }
+    }
     const out: Playlist[] = []
     for (const r of rows.filter((x) => x.kind === 'playlist')) {
       try {
         const p = parsePlaylist(await openText(key, r.payload, context(account.userId, 'playlist', r.id)))
-        out.push({ ...p, id: r.id, updatedAt: Number(r.updated_at), hasPrefs: prefs.has(r.id) })
+        out.push({ ...p, id: r.id, updatedAt: Number(r.updated_at), hasPrefs: prefs.has(r.id), status: statuses.get(r.id) ?? null })
       } catch {
         // Bloc illisible (clé remplacée entre-temps) : il sera réécrit par un appareil.
       }
@@ -506,8 +578,68 @@ export class SupabaseBackend implements Backend {
     const now = Date.now()
     const rows = [{ kind: 'playlist', id: p.id, payload: '', deleted: true, updated_at: nextUpdatedAt(p.updatedAt, now) }]
     if (p.hasPrefs) rows.push({ kind: 'prefs', id: p.id, payload: '', deleted: true, updated_at: now })
+    if (p.status) rows.push({ kind: 'status', id: p.id, payload: '', deleted: true, updated_at: now })
     const { error } = await this.db.from('sealed_items').upsert(rows, { onConflict: 'user_id,kind,id' })
     if (error) throw error
+  }
+
+  // ---------------------------------------------------------------- Lancer sur un appareil
+
+  async castTo(account: Account, device: Device, item: CastItem): Promise<void> {
+    await this.broadcast(account, {
+      type: 'cast_command',
+      command: {
+        targetDeviceId: device.id, itemType: item.itemType, itemId: '', title: item.title.slice(0, 200),
+        positionMs: Math.max(0, Math.round(item.positionMs)), senderDeviceId: WEB_SENDER, contentKey: item.contentKey,
+      },
+    })
+  }
+
+  // ---------------------------------------------------------------- Contrôle parental
+
+  private async sealedRow(account: Account, kind: string, id: string): Promise<string | null> {
+    const key = this.key(account)
+    const { data, error } = await this.db.from('sealed_items').select('payload')
+      .eq('kind', kind).eq('id', id).eq('deleted', false).limit(1)
+    if (error) throw error
+    const row = (data as { payload: string }[] | null)?.[0]
+    return row ? openText(key, row.payload, context(account.userId, kind, id)) : null
+  }
+
+  private async writeSealed(account: Account, kind: string, id: string, plain: string | null): Promise<void> {
+    const key = this.key(account)
+    const payload = plain === null ? '' : await seal(key, plain, context(account.userId, kind, id))
+    const { error } = await this.db.from('sealed_items')
+      .upsert({ kind, id, payload, updated_at: Date.now(), deleted: plain === null }, { onConflict: 'user_id,kind,id' })
+    if (error) throw error
+  }
+
+  async parental(account: Account): Promise<Parental | null> {
+    const text = await this.sealedRow(account, 'parental', 'main')
+    if (!text) return null
+    const o = JSON.parse(text) as Partial<Parental>
+    return { pinHash: String(o.pinHash ?? ''), autoAdult: o.autoAdult !== false, kidExit: o.kidExit !== false }
+  }
+
+  async saveParental(account: Account, value: Parental | null): Promise<void> {
+    // Même ordre de champs que SealedParental : l'appli retrouve le même texte et ne le renvoie pas.
+    await this.writeSealed(account, 'parental', 'main',
+      value && JSON.stringify({ pinHash: value.pinHash, autoAdult: value.autoAdult, kidExit: value.kidExit }))
+  }
+
+  async catalog(account: Account, playlistId: string): Promise<{ entries: CatalogEntry[]; prefs: SealedPrefs }> {
+    const [catalog, prefs] = await Promise.all([
+      this.sealedRow(account, 'catalog', playlistId), this.sealedRow(account, 'prefs', playlistId),
+    ])
+    const entries = catalog ? ((JSON.parse(catalog) as { categories?: CatalogEntry[] }).categories ?? []) : []
+    return { entries, prefs: prefs ? { ...EMPTY_PREFS, ...(JSON.parse(prefs) as SealedPrefs) } : EMPTY_PREFS }
+  }
+
+  async setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean): Promise<void> {
+    // Relu juste avant d'écrire : un appareil a pu changer d'autres préférences entre-temps.
+    const text = await this.sealedRow(account, 'prefs', playlistId)
+    const current = text ? { ...EMPTY_PREFS, ...(JSON.parse(text) as SealedPrefs) } : EMPTY_PREFS
+    await this.writeSealed(account, 'prefs', playlistId, JSON.stringify(withCategoryLock(current, rest, locked)))
   }
 
   // ---------------------------------------------------------------- Outils

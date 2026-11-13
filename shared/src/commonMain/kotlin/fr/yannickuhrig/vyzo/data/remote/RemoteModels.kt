@@ -180,6 +180,12 @@ data class CastCommand(
     val posterUrl: String? = null,
     val positionMs: Long = 0L,
     val senderDeviceId: String? = null,
+    /**
+     * Envoi du site du compte : clé de contenu commune à tous les appareils ([fr.yannickuhrig.vyzo.data.db.PlaylistKeys]),
+     * que l'appareil visé traduit en uid local. [itemType] vaut alors « content-movie », « content-episode »,
+     * « content-series » ou « content-channel » : les versions qui ne connaissent pas ce champ l'ignorent.
+     */
+    val contentKey: String? = null,
 )
 
 @Serializable

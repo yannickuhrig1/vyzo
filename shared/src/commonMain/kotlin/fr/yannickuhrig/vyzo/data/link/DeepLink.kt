@@ -1,6 +1,7 @@
 package fr.yannickuhrig.vyzo.data.link
 
 import fr.yannickuhrig.vyzo.AppContainer
+import fr.yannickuhrig.vyzo.data.remote.CastCommand
 import fr.yannickuhrig.vyzo.data.repo.Repository
 import fr.yannickuhrig.vyzo.ui.common.PlayKind
 import fr.yannickuhrig.vyzo.ui.common.Routes
@@ -53,5 +54,26 @@ suspend fun AppContainer.deepLinkTarget(link: DeepLink): DeepLinkTarget? {
                 else -> null
             }
         }
+    }
+}
+
+/**
+ * « Lancer sur la TV » depuis le site du compte : le titre est désigné par sa clé de contenu. Mêmes vérifications
+ * qu'un lien (catalogue du profil actif, code parental) ; les films et épisodes reprennent à la position envoyée.
+ */
+suspend fun AppContainer.castTarget(cmd: CastCommand): DeepLinkTarget? {
+    val key = cmd.contentKey?.takeIf { it.isNotBlank() && it.length <= 512 } ?: return null
+    val uid = repo.localUid(key) ?: return null
+    val kind = when (cmd.itemType) {
+        "content-series" -> DeepLinkKind.SERIES
+        "content-movie", "content-episode", "content-channel" -> DeepLinkKind.PLAY
+        else -> return null
+    }
+    val target = deepLinkTarget(DeepLink(kind, uid)) ?: return null
+    val start = cmd.positionMs.takeIf { it > 0 } ?: return target
+    return when {
+        db.movies().get(uid) != null -> target.copy(route = Routes.player(PlayKind.MOVIE, uid, start = start))
+        db.series().episode(uid) != null -> target.copy(route = Routes.player(PlayKind.EPISODE, uid, start = start))
+        else -> target
     }
 }

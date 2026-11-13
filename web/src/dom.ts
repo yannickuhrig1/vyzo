@@ -61,6 +61,14 @@ const ICONS: Record<string, string[]> = {
   eyeOff: ['M3 3l18 18', 'M10.6 5.1A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.9', 'M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a10 10 0 0 0 4.4-1', 'M9.9 9.9a3 3 0 0 0 4.2 4.2'],
   unlock: ['M6 11h12v9H6z', 'M8 11V8a4 4 0 0 1 7.5-2'],
   check: ['M5 12l5 5 9-10'],
+  home: ['M4 10.5L12 4l8 6.5V20H4z', 'M10 20v-6h4v6'],
+  search: ['M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z', 'M20 20l-4-4'],
+  shield: ['M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z', 'M9 12l2 2 4-4'],
+  arrow: ['M5 12h14', 'M13 6l6 6-6 6'],
+  play: ['M8 5v14l11-7z'],
+  cast: ['M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6', 'M3 12a8 8 0 0 1 8 8', 'M3 16a4 4 0 0 1 4 4', 'M3 20h.01'],
+  calendar: ['M4 6h16v14H4z', 'M4 10h16', 'M9 3v5', 'M15 3v5'],
+  sparkle: ['M12 3v4', 'M12 17v4', 'M3 12h4', 'M17 12h4', 'M6 6l2.5 2.5', 'M15.5 15.5L18 18', 'M18 6l-2.5 2.5', 'M8.5 15.5L6 18'],
 }
 
 export function icon(name: keyof typeof ICONS | string, size = 18): SVGSVGElement {

@@ -169,6 +169,10 @@ class Repository(
         return PlaylistKeys.contentKey(uid, pid, PlaylistKeys.of(p))
     }
 
+    /** Clé de contenu (venue d'un autre appareil ou du site) → uid local, ou null si sa playlist n'est pas sur cet appareil. */
+    suspend fun localUid(contentKey: String): String? =
+        db.playlists().all().firstNotNullOfOrNull { PlaylistKeys.localUid(contentKey, it.id, PlaylistKeys.of(it)) }
+
     // ------------------------------------------------------------ Groupes & chaînes
 
     private fun categoryTitle(r: CategoryRow, scope: ViewScope): String =

@@ -104,6 +104,7 @@ import androidx.savedstate.read
 import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
+import fr.yannickuhrig.vyzo.data.link.castTarget
 import fr.yannickuhrig.vyzo.data.link.deepLinkTarget
 import fr.yannickuhrig.vyzo.data.repo.Repository
 import fr.yannickuhrig.vyzo.schedule.AppEvent
@@ -383,7 +384,15 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
         c.cloud.incomingCastCommands.collect { cmd ->
             val myId = c.platform.deviceModel
             if (cmd.senderDeviceId != null && cmd.senderDeviceId == myId) return@collect
-            if (cmd.targetDeviceId != null && cmd.targetDeviceId != myId && cmd.targetDeviceId != "all") return@collect
+            val target = cmd.targetDeviceId
+            if (target != null && target != myId && target != "all" && target != c.cloud.thisDeviceId()) return@collect
+            if (cmd.contentKey != null) {
+                // Envoi du site du compte : le titre est retrouvé dans le catalogue de cet appareil.
+                val found = c.castTarget(cmd)
+                if (found == null) c.platform.toast("« ${cmd.title.take(80)} » n'est pas disponible sur cet appareil")
+                else gate(found.locked) { nav.navigate(found.route) }
+                return@collect
+            }
             val route = when (cmd.itemType) {
                 PlayKind.CHANNEL -> Routes.channel(cmd.itemId, Repository.KEY_ALL)
                 PlayKind.MOVIE -> Routes.player(PlayKind.MOVIE, cmd.itemId, start = cmd.positionMs)

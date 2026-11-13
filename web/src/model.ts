@@ -70,6 +70,17 @@ export interface Playlist {
   userAgent: string
   updatedAt: number
   hasPrefs: boolean
+  /** État chez le fournisseur, envoyé par un appareil (1.13.0-beta2 et plus) ; null tant qu'aucun ne l'a vérifié. */
+  status: PlaylistStatus | null
+}
+
+/** Ligne chiffrée « status » (SealedStatus dans l'appli). */
+export interface PlaylistStatus {
+  expiresAt: number
+  maxConnections: number
+  status: string
+  /** Jour de la dernière vérification (minuit UTC). */
+  checkedDay: number
 }
 
 export interface UserList {
@@ -232,4 +243,78 @@ export function statusLabel(r: Recording, now: number = Date.now()): string {
     case 'CANCELLED':
       return 'Annulé'
   }
+}
+
+// ------------------------------------------------------------------ État de l'abonnement
+
+export type Tone = 'ok' | 'warn' | 'bad'
+
+const expiryFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+
+/** Délai sous lequel une expiration proche est signalée. */
+export const EXPIRY_WARN_DAYS = 14
+
+const STATUS_LABEL: Record<string, string> = { expired: 'Expiré', banned: 'Suspendu', disabled: 'Désactivé' }
+
+export function subscriptionState(s: PlaylistStatus | null, now: number = Date.now()): { tone: Tone; label: string; daysLeft: number | null } | null {
+  if (!s) return null
+  const status = s.status.trim().toLowerCase()
+  if (status && status !== 'active') return { tone: 'bad', label: STATUS_LABEL[status] ?? s.status.trim(), daysLeft: null }
+  if (s.expiresAt <= 0) return { tone: 'ok', label: 'Sans date de fin', daysLeft: null }
+  const daysLeft = Math.ceil((s.expiresAt - now) / 86_400_000)
+  if (daysLeft <= 0) return { tone: 'bad', label: 'Expiré', daysLeft: 0 }
+  if (daysLeft <= EXPIRY_WARN_DAYS) return { tone: 'warn', label: daysLeft === 1 ? 'Expire demain' : `Expire dans ${daysLeft} jours`, daysLeft }
+  return { tone: 'ok', label: `Jusqu’au ${expiryFmt.format(s.expiresAt)}`, daysLeft }
+}
+
+// ------------------------------------------------------------------ Lancer sur un appareil
+
+/** Première version de l'appli qui sait ouvrir un titre envoyé par le site (1.13.0-beta2). */
+export const CAST_MIN_VERSION = 40
+
+/** itemType compris par CastCommand côté appli (castTarget dans DeepLink.kt). */
+export function castItemType(kind: ContentKind, fromHistory: boolean): string {
+  if (kind === 'LIVE') return 'content-channel'
+  if (kind === 'MOVIE') return 'content-movie'
+  // Dans l'historique, une ligne « série » est l'épisode en cours ; dans une liste, c'est la série.
+  return fromHistory ? 'content-episode' : 'content-series'
+}
+
+export type CastReadiness = 'ready' | 'offline' | 'outdated'
+
+export function castReadiness(d: Device, now: number = Date.now()): CastReadiness {
+  if (d.versionCode < CAST_MIN_VERSION) return 'outdated'
+  return isOnline(d, now) ? 'ready' : 'offline'
+}
+
+// ------------------------------------------------------------------ Contrôle parental
+
+/** Ligne chiffrée « parental » (SealedParental) : code et options communs à tous les appareils. */
+export interface Parental { pinHash: string; autoAdult: boolean; kidExit: boolean }
+
+/** Même empreinte que ParentalControl.hashParental dans l'appli. */
+export function hashParental(pin: string): Promise<string> {
+  return sha256Hex(`vyzo-parental:${pin}`)
+}
+
+export interface CatalogEntry { rest: string; name: string; kind: ContentKind; adult: boolean }
+
+/** Ligne chiffrée « prefs » (SealedPrefs), dans l'ordre des champs de l'appli pour que le texte reste identique. */
+export interface SealedCategoryPref { rest: string; hidden: boolean; position: number | null; locked: boolean | null; name: string }
+export interface SealedPrefs { categories: SealedCategoryPref[]; channels: unknown[] }
+
+/** Règle de l'appli : choix explicite, sinon détection « adulte » si elle est active. */
+export function categoryLocked(entry: CatalogEntry, pref: SealedCategoryPref | undefined, autoAdult: boolean): boolean {
+  return pref?.locked ?? (autoAdult && entry.adult)
+}
+
+/** Préférences avec la catégorie [rest] verrouillée ou non ; le reste (masquage, ordre, nom, chaînes) est gardé. */
+export function withCategoryLock(prefs: SealedPrefs, rest: string, locked: boolean): SealedPrefs {
+  const categories = prefs.categories.map((c) => (c.rest === rest ? { ...c, locked } : c))
+  if (!categories.some((c) => c.rest === rest)) {
+    categories.push({ rest, hidden: false, position: null, locked, name: '' })
+    // L'appli range par uid complet (même préfixe pour toute la playlist) : l'ordre de « rest » suffit.
+    categories.sort((a, b) => (a.rest < b.rest ? -1 : a.rest > b.rest ? 1 : 0))
+  }
+  return { categories, channels: prefs.channels }
 }

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   cleanName, hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, nextUpdatedAt, profileColor, progressRatio,
   recordingGroup, statusLabel, updateInProgress, updatePending,
-  type Device, type Profile, type Recording,
+  CAST_MIN_VERSION, castItemType, castReadiness, categoryLocked, hashParental, subscriptionState, withCategoryLock,
+  type CatalogEntry, type Device, type PlaylistStatus, type Profile, type Recording, type SealedPrefs,
 } from './model'
 
 const profile = (id: string, position: number, colorIndex = 0): Profile =>
@@ -100,5 +101,68 @@ describe('appareils', () => {
     expect(progressRatio({ positionMs: 50, durationMs: 100 })).toBe(0.5)
     expect(progressRatio({ positionMs: 150, durationMs: 100 })).toBe(1)
     expect(progressRatio({ positionMs: 10, durationMs: 0 })).toBe(0)
+  })
+})
+
+describe('état de l’abonnement', () => {
+  const now = Date.UTC(2026, 10, 13, 12)
+  const s = (o: Partial<PlaylistStatus>): PlaylistStatus => ({ expiresAt: 0, maxConnections: 1, status: 'Active', checkedDay: 0, ...o })
+
+  it('rien de vérifié : pas d’état', () => {
+    expect(subscriptionState(null, now)).toBeNull()
+  })
+  it('compte refusé par le fournisseur', () => {
+    expect(subscriptionState(s({ status: 'Banned' }), now)).toMatchObject({ tone: 'bad', label: 'Suspendu' })
+    expect(subscriptionState(s({ status: 'Expired', expiresAt: now + 30 * 86_400_000 }), now)?.tone).toBe('bad')
+  })
+  it('expiration passée, proche ou lointaine', () => {
+    expect(subscriptionState(s({ expiresAt: now - 1000 }), now)).toMatchObject({ tone: 'bad', label: 'Expiré' })
+    expect(subscriptionState(s({ expiresAt: now + 86_400_000 }), now)).toMatchObject({ tone: 'warn', label: 'Expire demain' })
+    expect(subscriptionState(s({ expiresAt: now + 5 * 86_400_000 }), now)).toMatchObject({ tone: 'warn', daysLeft: 5 })
+    expect(subscriptionState(s({ expiresAt: now + 60 * 86_400_000 }), now)?.tone).toBe('ok')
+    expect(subscriptionState(s({}), now)?.label).toBe('Sans date de fin')
+  })
+})
+
+describe('lancer sur un appareil', () => {
+  it('type envoyé selon le contenu', () => {
+    expect(castItemType('MOVIE', true)).toBe('content-movie')
+    expect(castItemType('SERIES', true)).toBe('content-episode')
+    expect(castItemType('SERIES', false)).toBe('content-series')
+    expect(castItemType('LIVE', false)).toBe('content-channel')
+  })
+  it('appareil prêt, éteint ou trop ancien', () => {
+    const now = 1_000_000_000
+    const d = { id: 'a', name: '', kind: 'tv', model: '', system: '', appVersion: '', versionCode: CAST_MIN_VERSION, lastSeenAt: now,
+      updateRequestedAt: 0, updateStatus: '', updateStatusAt: 0 } as const
+    expect(castReadiness(d, now)).toBe('ready')
+    expect(castReadiness({ ...d, lastSeenAt: now - 3600_000 }, now)).toBe('offline')
+    expect(castReadiness({ ...d, versionCode: CAST_MIN_VERSION - 1 }, now)).toBe('outdated')
+  })
+})
+
+describe('contrôle parental', () => {
+  it('empreinte identique à celle de l’appli', async () => {
+    // ParentalControl.hashParental("1234") = sha256("vyzo-parental:1234")
+    expect(await hashParental('1234')).toBe('fc41febd83f18e3997ce39eade8a4f1217921b652bc0f2f3625f68ba8c238854')
+  })
+  it('choix explicite, sinon détection adulte', () => {
+    const e: CatalogEntry = { rest: 'C:L:1', name: 'Adultes', kind: 'LIVE', adult: true }
+    expect(categoryLocked(e, undefined, true)).toBe(true)
+    expect(categoryLocked(e, undefined, false)).toBe(false)
+    expect(categoryLocked(e, { rest: 'C:L:1', hidden: false, position: null, locked: false, name: '' }, true)).toBe(false)
+  })
+  it('verrouiller garde le reste des préférences, dans l’ordre de l’appli', () => {
+    const prefs: SealedPrefs = {
+      categories: [{ rest: 'C:L:2', hidden: true, position: 3, locked: null, name: 'Sport' }],
+      channels: [{ rest: 'L:9', name: 'X' }],
+    }
+    const a = withCategoryLock(prefs, 'C:L:2', true)
+    expect(a.categories).toEqual([{ rest: 'C:L:2', hidden: true, position: 3, locked: true, name: 'Sport' }])
+    expect(a.channels).toBe(prefs.channels)
+    const b = withCategoryLock(prefs, 'C:L:1', true)
+    expect(b.categories.map((c) => c.rest)).toEqual(['C:L:1', 'C:L:2'])
+    expect(JSON.stringify(b.categories[0])).toBe('{"rest":"C:L:1","hidden":false,"position":null,"locked":true,"name":""}')
+    expect(prefs.categories).toHaveLength(1)
   })
 })

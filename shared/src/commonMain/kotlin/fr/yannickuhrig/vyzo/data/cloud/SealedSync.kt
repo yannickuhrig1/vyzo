@@ -48,6 +48,47 @@ internal data class SealedPlaylist(
     val username: String = "", val password: String = "", val mac: String = "", val userAgent: String = "",
 )
 
+/**
+ * État de l'abonnement chez le fournisseur, pour le site du compte (les appareils ne le relisent pas : chacun
+ * interroge lui-même le fournisseur). Pas de nombre de connexions en cours ni d'heure exacte : ils changent sans cesse
+ * et feraient réécrire la ligne à chaque synchro.
+ */
+@Serializable
+internal data class SealedStatus(
+    val expiresAt: Long = 0,
+    val maxConnections: Int = 0,
+    val status: String = "",
+    /** Jour de la vérification (minuit UTC, en ms). */
+    val checkedDay: Long = 0,
+)
+
+/**
+ * Contrôle parental commun à tous les appareils. Créé depuis le site du compte : tant que la ligne n'existe pas, chaque
+ * appareil garde son propre code. Ensuite, un changement fait sur un appareil ou sur le site s'applique partout.
+ */
+@Serializable
+internal data class SealedParental(
+    /** Même empreinte que [fr.yannickuhrig.vyzo.data.profile.ParentalControl.hashParental] ; vide = pas de code. */
+    val pinHash: String = "",
+    val autoAdult: Boolean = true,
+    val kidExit: Boolean = true,
+) {
+    fun applyTo(s: AppSettings) = s.copy(
+        parentalPinHash = pinHash, stealthModeEnabled = pinHash.isNotBlank(), parentalAutoAdult = autoAdult, parentalKidExit = kidExit,
+    )
+
+    companion object {
+        fun of(s: AppSettings) = SealedParental(s.parentalPinHash, s.parentalAutoAdult, s.parentalKidExit)
+    }
+}
+
+/** Catégories d'une playlist, pour que le site du compte puisse en verrouiller (les appareils ne le relisent pas). */
+@Serializable
+internal data class SealedCatalogEntry(val rest: String, val name: String, val kind: String, val adult: Boolean = false)
+
+@Serializable
+internal data class SealedCatalog(val categories: List<SealedCatalogEntry> = emptyList())
+
 @Serializable
 internal data class SealedEpg(
     val name: String, val url: String, val enabled: Boolean,
@@ -164,6 +205,7 @@ internal class SealedSync(
         db.playlists().observeAll().map { all -> all.map { it.toSealed() } }.distinctUntilChanged().drop(1).map { },
         settings.flow.map { SealedSettings.of(it) }.distinctUntilChanged().drop(1).map { },
         settings.flow.map { SealedKeys.of(it) }.distinctUntilChanged().drop(1).map { },
+        settings.flow.map { SealedParental.of(it) }.distinctUntilChanged().drop(1).map { },
         db.epg().observeSources().map { all -> all.filter { !it.auto }.map { SealedEpg(it.name, it.url, it.enabled, it.priority, it.mode) } }.distinctUntilChanged().drop(1).map { },
         db.categories().observePrefs().distinctUntilChanged().drop(1).map { },
         db.channelPrefs().observeAll().distinctUntilChanged().drop(1).map { },
@@ -258,7 +300,7 @@ internal class SealedSync(
     suspend fun push(session: CloudSession) {
         val key = currentKey(session) ?: return
         val known = store.get().sealedKnown
-        val current = snapshot().associateBy { it.slot }
+        val current = snapshot(parentalShared = slot(KIND_PARENTAL, PARENTAL_ID) in known).associateBy { it.slot }
         // Toutes les playlists disparues d'un coup : base vidée (retour à une version antérieure de l'appli), pas un choix.
         // On ne propage rien, et la prochaine réception les ramène depuis le compte.
         if (known.keys.count { it.startsWith("$KIND_PLAYLIST|") } >= 2 && current.keys.none { it.startsWith("$KIND_PLAYLIST|") }) {
@@ -284,9 +326,10 @@ internal class SealedSync(
         store.update { it.copy(sealedKnown = next) }
     }
 
-    private suspend fun snapshot(): List<Item> = buildList {
+    private suspend fun snapshot(parentalShared: Boolean): List<Item> = buildList {
         val playlists = db.playlists().all().filter { portable(it.url) }.distinctBy { PlaylistKeys.of(it) }
         val categories = db.categories().allPrefs()
+        val catalog = db.categories().all().groupBy { it.playlistId }
         val channels = db.channelPrefs().all()
         for (p in playlists) {
             val id = PlaylistKeys.of(p)
@@ -299,7 +342,17 @@ internal class SealedSync(
                     .map { SealedChannelPref(it.uid.removePrefix(prefix), it.name, it.number, it.epgKey, it.locked, it.hidden) },
             )
             if (prefs.categories.isNotEmpty() || prefs.channels.isNotEmpty()) add(Item(KIND_PREFS, id, encode(SealedPrefs.serializer(), prefs)))
+            if (p.accountCheckedAt > 0 && (p.expiresAt > 0 || p.accountStatus.isNotBlank())) {
+                val status = SealedStatus(p.expiresAt, p.maxConnections, p.accountStatus.take(40), p.accountCheckedAt / DAY_MS * DAY_MS)
+                add(Item(KIND_STATUS, id, encode(SealedStatus.serializer(), status)))
+            }
+            catalog[p.id]?.takeIf { it.isNotEmpty() }?.let { list ->
+                val entries = list.sortedWith(compareBy({ it.kind.ordinal }, { it.position }, { it.uid }))
+                    .map { SealedCatalogEntry(it.uid.removePrefix(prefix), it.name.take(120), it.kind.name, it.adult) }
+                add(Item(KIND_CATALOG, id, encode(SealedCatalog.serializer(), SealedCatalog(entries))))
+            }
         }
+        if (parentalShared) add(Item(KIND_PARENTAL, PARENTAL_ID, encode(SealedParental.serializer(), SealedParental.of(settings.get()))))
         db.epg().sources().filter { !it.auto && portable(it.url) }.distinctBy { it.url }.forEach {
             add(Item(KIND_EPG, VaultCrypto.sha256(it.url).take(24), encode(SealedEpg.serializer(), SealedEpg(it.name, it.url, it.enabled, it.priority, it.mode))))
         }
@@ -324,7 +377,7 @@ internal class SealedSync(
         // Identifiant local -> avec le guide. Lancé une seule fois à la fin : les fournisseurs n'aiment pas les connexions répétées.
         val reloads = HashMap<Long, Boolean>()
         // Les playlists d'abord : les personnalisations de chaînes ont besoin de leur identifiant local.
-        for (kind in listOf(KIND_PLAYLIST, KIND_PREFS, KIND_EPG, KIND_SETTINGS, KIND_KEY)) {
+        for (kind in listOf(KIND_PLAYLIST, KIND_PREFS, KIND_EPG, KIND_SETTINGS, KIND_KEY, KIND_PARENTAL)) {
             for (r in rows.filter { it.str("kind") == kind }) {
                 runCatching { applyRow(session, key, r, known, reloads) }.onFailure { Log.w(TAG, "élément chiffré ignoré", it) }
             }
@@ -361,6 +414,15 @@ internal class SealedSync(
                 return
             }
             KIND_KEY -> applyKey(id, plain)
+            KIND_PARENTAL -> {
+                val shared = json.decodeFromString(SealedParental.serializer(), plain)
+                val before = settings.get()
+                settings.update { shared.applyTo(it) }
+                if (before.parentalAutoAdult && !shared.autoAdult) db.categories().clearAdultFlags()
+                // Comme les réglages : l'état obtenu, pour ne pas renvoyer le bloc reçu sous une autre forme.
+                known[slot] = VaultCrypto.sha256(encode(SealedParental.serializer(), SealedParental.of(settings.get())))
+                return
+            }
             else -> false
         }
         if (applied) known[slot] = hash
@@ -447,6 +509,13 @@ internal class SealedSync(
         const val KIND_SETTINGS = "settings"
         const val SETTINGS_ID = "main"
         const val KIND_KEY = "key"
+        /** Écrit pour le site du compte seulement (voir [SealedStatus]). */
+        const val KIND_STATUS = "status"
+        /** Écrit pour le site du compte seulement (voir [SealedCatalog]). */
+        const val KIND_CATALOG = "catalog"
+        const val KIND_PARENTAL = "parental"
+        const val PARENTAL_ID = "main"
+        private const val DAY_MS = 86_400_000L
 
         private fun slot(kind: String, id: String) = "$kind|$id"
     }

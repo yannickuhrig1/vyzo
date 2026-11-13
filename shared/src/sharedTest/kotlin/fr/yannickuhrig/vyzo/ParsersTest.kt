@@ -455,6 +455,25 @@ class ParsersTest {
     }
 
     @Test
+    fun castCommandFromAccountSite() {
+        // Message tel que l'envoie le site du compte (web/src/backend.ts, castTo).
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val text = """{"targetDeviceId":"6f1c0e2a-0000-4000-8000-000000000001","itemType":"content-episode","itemId":"","title":"Le Bureau des légendes","positionMs":1800000,"senderDeviceId":"Vyzo Web","contentKey":"a94c7edf66d1:E:9001"}"""
+        val cmd = json.decodeFromString(fr.yannickuhrig.vyzo.data.remote.CastCommand.serializer(), text)
+        assertEquals("a94c7edf66d1:E:9001", cmd.contentKey)
+        assertEquals("content-episode", cmd.itemType)
+        assertEquals(1_800_000L, cmd.positionMs)
+        // Clé de contenu → uid local de la playlist n° 7 de cet appareil.
+        assertEquals("7:E:9001", fr.yannickuhrig.vyzo.data.db.PlaylistKeys.localUid(cmd.contentKey!!, 7, "a94c7edf66d1"))
+    }
+
+    @Test
+    fun parentalHashMatchesAccountSite() {
+        // Même empreinte que hashParental dans web/src/model.ts : le code choisi sur le site s'ouvre sur l'appareil.
+        assertEquals("fc41febd83f18e3997ce39eade8a4f1217921b652bc0f2f3625f68ba8c238854", fr.yannickuhrig.vyzo.data.profile.ParentalControl.hashParental("1234"))
+    }
+
+    @Test
     fun recordingHostResolutionAndScheduleSync() {
         val defaultSettings = fr.yannickuhrig.vyzo.data.prefs.AppSettings()
         // Par défaut : actif sur Desktop et TV, inactif sur Mobile

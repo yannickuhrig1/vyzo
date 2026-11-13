@@ -1,7 +1,7 @@
-import { UserError, type Account, type Backend, type ListsData, type PlaylistDraft, type Table, type VaultStatus } from './backend'
+import { UserError, type Account, type Backend, type CastItem, type ListsData, type PlaylistDraft, type Table, type VaultStatus } from './backend'
 import {
-  nextUpdatedAt,
-  type Device, type ListItem, type Playlist, type Profile, type ProfileActivity, type ProgressItem, type Recording,
+  nextUpdatedAt, withCategoryLock,
+  type CatalogEntry, type Device, type Parental, type SealedPrefs, type ListItem, type Playlist, type Profile, type ProfileActivity, type ProgressItem, type Recording,
   type RecordingStatus, type UserList,
 } from './model'
 import { playlistKey } from './vault'
@@ -56,8 +56,8 @@ export class DemoBackend implements Backend {
   ]
 
   private deviceList: Device[] = [
-    this.dev('d1', 'Salon (Fire TV)', 'tv', 'Amazon AFTKA', 'Android 11 (API 30)', '1.12.0-beta3', 36, 4 * 60_000),
-    this.dev('d2', 'Vyzo PC (MAISON)', 'pc', 'PC', 'Linux Mint 22.3', '1.12.0-beta3', 36, 40_000),
+    this.dev('d1', 'Salon (Fire TV)', 'tv', 'Amazon AFTKA', 'Android 11 (API 30)', '1.13.0-beta2', 40, 4 * 60_000),
+    this.dev('d2', 'Vyzo PC (MAISON)', 'pc', 'PC', 'Linux Mint 22.3', '1.13.0-beta2', 40, 40_000),
     this.dev('d3', 'Pixel 8', 'mobile', 'Google Pixel 8', 'Android 15 (API 35)', '1.11.8', 33, 3 * D),
   ]
 
@@ -65,10 +65,11 @@ export class DemoBackend implements Backend {
     {
       id: 'a94c7edf66d1', name: 'Abonnement principal', type: 'XTREAM', url: 'http://exemple-iptv.tv:8080',
       username: 'demo-user', password: 'demo-pass', mac: '', userAgent: '', updatedAt: 1, hasPrefs: true,
+      status: { expiresAt: Date.now() + 9 * D, maxConnections: 2, status: 'Active', checkedDay: Date.now() - (Date.now() % D) },
     },
     {
       id: 'bf01aa807023', name: 'Chaînes gratuites', type: 'M3U', url: 'https://iptv-org.example/fr.m3u',
-      username: '', password: '', mac: '', userAgent: '', updatedAt: 1, hasPrefs: false,
+      username: '', password: '', mac: '', userAgent: '', updatedAt: 1, hasPrefs: false, status: null,
     },
   ]
 
@@ -141,6 +142,20 @@ export class DemoBackend implements Backend {
 
   async lockVault() {
     this.unlocked = false
+    sessionStorage.removeItem('vyzo-demo-remember')
+  }
+
+  async changePassword(_account: Account, current: string, next: string) {
+    await this.wait(900)
+    if (current !== 'demo') throw new UserError('Mot de passe actuel incorrect')
+    if (!next) throw new UserError('Nouveau mot de passe vide')
+  }
+
+  async signOutOthers() {
+    await this.wait(400)
+  }
+
+  async forgetRemembered() {
     sessionStorage.removeItem('vyzo-demo-remember')
   }
 
@@ -257,7 +272,7 @@ export class DemoBackend implements Backend {
   }
 
   async latestVersion() {
-    return { versionCode: 36, versionName: '1.12.0-beta3' }
+    return { versionCode: 40, versionName: '1.13.0-beta2' }
   }
 
   async requestUpdate(d: Device) {
@@ -273,7 +288,7 @@ export class DemoBackend implements Backend {
     steps.forEach((text, i) => setTimeout(() => {
       cur.updateStatus = text
       cur.updateStatusAt = Date.now()
-      if (i === steps.length - 1) { cur.appVersion = '1.12.0-beta3'; cur.versionCode = 36; cur.lastSeenAt = Date.now() }
+      if (i === steps.length - 1) { cur.appVersion = '1.13.0-beta2'; cur.versionCode = 40; cur.lastSeenAt = Date.now() }
       this.changed('devices')
     }, 1200 * (i + 1)))
   }
@@ -296,13 +311,51 @@ export class DemoBackend implements Backend {
     const clash = all.find((p) => p.id === id && p.id !== previous?.id)
     if (clash) throw new UserError(`Cet abonnement est déjà sur le compte (« ${clash.name} »)`)
     if (previous) this.playlistList = this.playlistList.filter((p) => p.id !== previous.id)
-    this.playlistList.push({ ...draft, id, updatedAt: Date.now(), hasPrefs: previous?.id === id && previous.hasPrefs })
+    this.playlistList.push({ ...draft, id, updatedAt: Date.now(), hasPrefs: previous?.id === id && previous.hasPrefs, status: previous?.id === id ? previous.status : null })
     this.changed('sealed_items')
   }
 
   async deletePlaylist(_account: Account, p: Playlist) {
     await this.wait()
     this.playlistList = this.playlistList.filter((o) => o.id !== p.id)
+    this.changed('sealed_items')
+  }
+
+  async castTo(_account: Account, _device: Device, _item: CastItem) {
+    await this.wait(300)
+  }
+
+  private parentalValue: Parental | null = null
+  private prefs: Record<string, SealedPrefs> = {
+    a94c7edf66d1: { categories: [{ rest: 'C:L:12', hidden: false, position: null, locked: true, name: '' }], channels: [] },
+  }
+
+  async parental() {
+    await this.wait()
+    return this.parentalValue && { ...this.parentalValue }
+  }
+
+  async saveParental(_account: Account, value: Parental | null) {
+    await this.wait()
+    this.parentalValue = value && { ...value }
+    this.changed('sealed_items')
+  }
+
+  async catalog(_account: Account, playlistId: string) {
+    await this.wait()
+    const names: [CatalogEntry['kind'], string, boolean][] = playlistId === 'a94c7edf66d1'
+      ? [['LIVE', 'FR | Généralistes', false], ['LIVE', 'FR | Sport', false], ['LIVE', 'FR | Jeunesse', false], ['LIVE', 'Adultes 18+', true],
+        ['LIVE', 'FR | Info', false], ['MOVIE', 'Films | Nouveautés', false], ['MOVIE', 'Films | Horreur', false], ['MOVIE', 'XXX Films', true],
+        ['SERIES', 'Séries | Netflix', false], ['SERIES', 'Séries | Animation', false]]
+      : [['LIVE', 'Toutes les chaînes', false]]
+    const letter = { LIVE: 'L', MOVIE: 'M', SERIES: 'S' } as const
+    const entries: CatalogEntry[] = names.map(([kind, name, adult], i) => ({ rest: `C:${letter[kind]}:${10 + i}`, name, kind, adult }))
+    return { entries, prefs: this.prefs[playlistId] ?? { categories: [], channels: [] } }
+  }
+
+  async setCategoryLock(_account: Account, playlistId: string, rest: string, locked: boolean) {
+    await this.wait(250)
+    this.prefs[playlistId] = withCategoryLock(this.prefs[playlistId] ?? { categories: [], channels: [] }, rest, locked)
     this.changed('sealed_items')
   }
 }
