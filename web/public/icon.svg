@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs>
+  <filter id="softShadow" filterUnits="userSpaceOnUse" x="-400" y="-400" width="1824" height="1824">
+    <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#7B61FF" flood-opacity="0.22"/>
+  </filter>
+  <linearGradient id="leftBounce" x1="220" y1="300" x2="512" y2="820" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#00E5FF"/><stop offset="45%" stop-color="#3A86FF"/><stop offset="100%" stop-color="#8338EC"/>
+  </linearGradient>
+  <linearGradient id="rightBounce" x1="450" y1="780" x2="804" y2="220" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#9B287B"/><stop offset="30%" stop-color="#FF006E"/><stop offset="70%" stop-color="#FB5607"/><stop offset="100%" stop-color="#FFBE0B"/>
+  </linearGradient>
+</defs><rect width="1024" height="1024" rx="230" fill="#FFFFFF"/><g filter="url(#softShadow)">
+  <path d="M 512 760 L 764 260" stroke="url(#rightBounce)" stroke-width="210" stroke-linecap="round" fill="none"/>
+  <path d="M 260 360 L 512 760" stroke="url(#leftBounce)" stroke-width="210" stroke-linecap="round" fill="none"/>
+</g>
+<polygon points="488,695 488,755 540,725" fill="#FFFFFF" opacity="0.9" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="6" stroke-linejoin="round"/></svg>

@@ -55,6 +55,8 @@ class RealtimeClient(
     private val onCastCommand: ((CastCommand) -> Unit)? = null,
     private val onScheduleSync: ((ScheduleSyncEvent) -> Unit)? = null,
     private val onHistoryClear: ((HistoryClearEvent) -> Unit)? = null,
+    /** Contenus retirés de l'historique d'un profil (site du compte) : profil, clés de contenu. */
+    private val onHistoryRemove: ((String, List<String>) -> Unit)? = null,
     private val heartbeatMs: Long = HEARTBEAT_MS,
     private val tokenRefreshMs: Long = TOKEN_REFRESH_MS,
 ) {
@@ -233,6 +235,13 @@ class RealtimeClient(
                                 onScheduleSync?.invoke(ev)
                             }
                         }
+                    } else if (type == "history_remove") {
+                        // Pas « history_clear » : une ancienne version, qui ne connaît pas les clés, viderait tout l'historique.
+                        val cmdObj = p.get("command") as? JsonObject
+                        val profileId = cmdObj?.str("profileId").orEmpty()
+                        val keys = (cmdObj?.get("contentKeys") as? kotlinx.serialization.json.JsonArray)
+                            ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { k -> k.isNotBlank() } }.orEmpty()
+                        if (profileId.isNotBlank() && keys.isNotEmpty()) onHistoryRemove?.invoke(profileId, keys)
                     } else if (type == "history_clear") {
                         val cmdObj = p.get("command") as? JsonObject
                         if (cmdObj != null) {

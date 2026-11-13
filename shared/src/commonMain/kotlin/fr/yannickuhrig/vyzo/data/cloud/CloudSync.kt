@@ -73,6 +73,12 @@ data class CloudData(
     val vaultLost: Boolean = false,
     /** Empreinte de chaque élément chiffré au dernier échange avec le serveur. */
     val sealedKnown: Map<String, String> = emptyMap(),
+    /** Identifiant de cette installation dans la table « devices » (tiré au hasard à la première synchro). */
+    val deviceId: String = "",
+    /** Dernière demande de mise à jour à distance déjà prise en compte (devices.update_requested_at). */
+    val updateHandledAt: Long = 0,
+    /** Titres chiffrés déjà envoyés pour la progression et les listes antérieures (compte [metaUserId]). */
+    val metaUserId: String = "",
 )
 
 /** [file] doit se terminer par ".preferences_pb" (Android : filesDir/datastore/cloud.preferences_pb). */
@@ -156,6 +162,16 @@ class CloudSync(
     val incomingHistoryClear = kotlinx.coroutines.flow.MutableSharedFlow<HistoryClearEvent>(extraBufferCapacity = 8)
 
     /**
+     * Mise à jour de l'appli demandée à distance (site de gestion du compte). Branché par le conteneur sur le programme
+     * de mise à jour, qui rend compte avec [reportUpdateStatus].
+     */
+    val updateRequests = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+
+    @Volatile private var myDeviceId = ""
+    @Volatile private var lastDeviceReport = 0L
+    private val titles = ContentTitles(db)
+
+    /**
      * Pendant que l'appli est à l'écran, une connexion permanente au serveur prévient cet appareil dès qu'un autre
      * modifie le compte : la progression ou un favori ajouté sur le téléphone arrive aussitôt sur la TV.
      */
@@ -163,9 +179,17 @@ class CloudSync(
         if (realtimeEnabled && api.configured) {
             RealtimeClient(
                 baseUrl = api.baseUrl, apiKey = api.apiKey, client = api.client, scope = scope,
-                tables = listOf(T_PROFILES, T_PROGRESS, T_LISTS, T_ITEMS, T_RECORDINGS, T_SEALED),
+                tables = listOf(T_PROFILES, T_PROGRESS, T_LISTS, T_ITEMS, T_RECORDINGS, T_SEALED, T_DEVICES),
                 auth = { realtimeAuth() },
-                onChange = { table, record ->
+                onChange = onChange@{ table, record ->
+                    // Les appareils se signalent à chaque synchro : on ne regarde que les demandes adressées à celui-ci,
+                    // sans relancer de synchro (sinon chaque signalement réveillerait tous les autres).
+                    if (table == T_DEVICES) {
+                        if (record != null && record.str("id") == myDeviceId) {
+                            scope.launch { runCatching { onUpdateRequested(record.long("update_requested_at")) } }
+                        }
+                        return@onChange
+                    }
                     if (table == T_PROGRESS && record != null) {
                         scope.launch {
                             runCatching {
@@ -186,6 +210,9 @@ class CloudSync(
                 },
                 onHistoryClear = { ev ->
                     incomingHistoryClear.tryEmit(ev)
+                },
+                onHistoryRemove = { profileId, keys ->
+                    scope.launch { runCatching { repo.removeProgress(profileId, keys) }.onFailure { Log.w(TAG, "retrait d'historique", it) } }
                 },
             )
         } else {
@@ -463,6 +490,7 @@ class CloudSync(
             // Avant l'envoi : à la première connexion, ce qui est déjà sur le compte l'emporte sur la version de cet appareil.
             if (pull) runCatching { pullSealed(session) }.onFailure { Log.w(TAG, "réception des données chiffrées", it) }
             runCatching { sealed.push(session) }.onFailure { Log.w(TAG, "envoi des données chiffrées", it) }
+            backfillTitles(session)
             push(session)
             if (pull) {
                 pullAll(session)
@@ -470,6 +498,9 @@ class CloudSync(
                 profiles.ensureOne()
                 lastFullSync = System.currentTimeMillis()
             }
+            // Table absente d'un ancien serveur, réseau coupé… : le reste de la synchro n'en dépend pas.
+            runCatching { reportDevice(session, force = false) }.onFailure { Log.w(TAG, "signalement de l'appareil", it) }
+            Unit
         }
         res.onSuccess {
             val now = System.currentTimeMillis()
@@ -602,17 +633,17 @@ class CloudSync(
 
         // Éléments des groupes et favoris
         val groupSync = db.groups().allGroups().associate { it.id to it.syncId }
+        val vaultKey = vaultKey(session)
         while (true) {
             val items = db.groups().dirtyItems(BATCH)
             if (items.isEmpty()) break
-            val rows = items.filter { it.profileId in known && !groupSync[it.groupId].isNullOrBlank() }
-            if (rows.isNotEmpty()) authed {
-                api.upsert(
-                    T_ITEMS, "user_id,profile_id,list_id,content_key",
-                    JsonArray(rows.map { itemJson(it.profileId, groupSync.getValue(it.groupId), it.contentKey, it.kind.name, it.position, it.addedAt, it.updatedAt, false) }),
-                    it,
+            val rows = items.filter { it.profileId in known && !groupSync[it.groupId].isNullOrBlank() }.map {
+                withMeta(
+                    itemJson(it.profileId, groupSync.getValue(it.groupId), it.contentKey, it.kind.name, it.position, it.addedAt, it.updatedAt, false),
+                    session, vaultKey, it.contentKey, it.itemUid, it.kind,
                 )
             }
+            upsertUniform(T_ITEMS, "user_id,profile_id,list_id,content_key", rows)
             items.forEach { db.groups().markItemClean(it.profileId, it.groupId, it.contentKey, it.updatedAt) }
             if (items.size < BATCH) break
         }
@@ -621,14 +652,119 @@ class CloudSync(
         while (true) {
             val rows = db.progress().dirty(BATCH)
             if (rows.isEmpty()) break
-            val send = rows.filter { it.profileId in known }
-            if (send.isNotEmpty()) authed { api.upsert(T_PROGRESS, "user_id,profile_id,content_key", JsonArray(send.map { it.toJson() }), it) }
+            val send = rows.filter { it.profileId in known }.map { withMeta(it.toJson(), session, vaultKey, it.contentKey, it.uid, it.kind, it.parentUid) }
+            upsertUniform(T_PROGRESS, "user_id,profile_id,content_key", send)
             rows.forEach { db.progress().markClean(it.profileId, it.contentKey, it.updatedAt) }
             if (rows.size < BATCH) break
         }
 
         // Programmations : un échec (table absente d'un ancien serveur…) ne bloque pas le reste de la synchro.
         runCatching { pushRecordings() }.onFailure { Log.w(TAG, "envoi des programmations", it) }
+    }
+
+    // ------------------------------------------------------------------ Titres chiffrés
+
+    /** Serveur sans la colonne « meta » (migration pas encore passée) : on envoie sans titre. */
+    @Volatile private var metaUnsupported = false
+
+    private suspend fun vaultKey(session: CloudSession): ByteArray? {
+        val d = store.get()
+        return if (d.vaultUserId == session.userId) VaultCrypto.decode(d.vaultKey)?.takeIf { it.size == VaultCrypto.KEY_BYTES } else null
+    }
+
+    /** Ajoute le titre chiffré quand la clé du compte est là et que le contenu est connu ici ; sinon la ligne part sans. */
+    private suspend fun withMeta(
+        row: JsonObject, session: CloudSession, key: ByteArray?, contentKey: String, uid: String, kind: ContentKind, parentUid: String = "",
+    ): JsonObject {
+        if (key == null || metaUnsupported) return row
+        val meta = runCatching { titles.of(uid, kind, parentUid) }.getOrNull() ?: return row
+        return JsonObject(row + ("meta" to kotlinx.serialization.json.JsonPrimitive(titles.seal(key, session.userId, contentKey, meta))))
+    }
+
+    /**
+     * PostgREST veut les mêmes colonnes sur toutes les lignes d'un envoi groupé : celles avec titre et celles sans partent
+     * séparément (une ligne sans « meta » garde le titre déjà connu du serveur).
+     */
+    private suspend fun upsertUniform(table: String, onConflict: String, rows: List<JsonObject>) {
+        for (group in rows.groupBy { "meta" in it }.values) {
+            try {
+                authed { api.upsert(table, onConflict, JsonArray(group), it) }
+            } catch (e: CloudException) {
+                if (e.status != 400 || group.none { "meta" in it } || e.message?.contains("meta") != true) throw e
+                metaUnsupported = true
+                authed { api.upsert(table, onConflict, JsonArray(group.map { JsonObject(it - "meta") }), it) }
+            }
+        }
+    }
+
+    /** Une fois par compte : renvoie la progression et les listes existantes, cette fois avec leurs titres. */
+    private suspend fun backfillTitles(session: CloudSession) {
+        val d = store.get()
+        if (d.metaUserId == session.userId || vaultKey(session) == null) return
+        db.progress().markAllDirty()
+        db.groups().markAllItemsDirty()
+        store.update { it.copy(metaUserId = session.userId) }
+    }
+
+    // ------------------------------------------------------------------ Appareils
+
+    private suspend fun deviceId(): String {
+        if (myDeviceId.isNotBlank()) return myDeviceId
+        var id = store.get().deviceId
+        if (id.isBlank()) {
+            id = java.util.UUID.randomUUID().toString()
+            store.update { it.copy(deviceId = id) }
+        }
+        myDeviceId = id
+        return id
+    }
+
+    /**
+     * Signale cet appareil au compte (nom, type, version, dernière activité) au plus toutes les [DEVICE_REPORT_MS], et
+     * relit une éventuelle demande de mise à jour faite pendant qu'il était éteint.
+     */
+    private suspend fun reportDevice(session: CloudSession, force: Boolean) {
+        val p = platform ?: return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastDeviceReport < DEVICE_REPORT_MS) return
+        val id = deviceId()
+        val row = buildJsonObject {
+            put("id", id)
+            put("name", p.deviceName.take(120))
+            put("kind", if (p.isDesktop) "pc" else if (p.isTv) "tv" else "mobile")
+            put("model", p.deviceModel.take(120))
+            put("system", p.systemVersion.take(120))
+            put("app_version", p.appVersion.take(40))
+            put("version_code", p.appVersionCode)
+            put("last_seen_at", now)
+        }
+        authed { api.upsert(T_DEVICES, "user_id,id", JsonArray(listOf(row)), it) }
+        lastDeviceReport = now
+        val mine = authed { api.select(T_DEVICES, "select=update_requested_at&user_id=eq.${session.userId}&id=eq.${CloudApi.enc(id)}&limit=1", it) }
+        (mine.firstOrNull() as? JsonObject)?.let { onUpdateRequested(it.long("update_requested_at")) }
+    }
+
+    private suspend fun onUpdateRequested(requestedAt: Long) {
+        if (requestedAt <= 0) return
+        // Une demande vieille de plus d'une journée (appareil resté éteint) n'est plus d'actualité.
+        if (System.currentTimeMillis() - requestedAt > UPDATE_REQUEST_TTL_MS) return
+        var fresh = false
+        store.update {
+            if (requestedAt > it.updateHandledAt) { fresh = true; it.copy(updateHandledAt = requestedAt) } else it
+        }
+        if (fresh) updateRequests.tryEmit(requestedAt)
+    }
+
+    /** Où en est la mise à jour demandée à distance : affiché sur le site du compte. */
+    suspend fun reportUpdateStatus(text: String) {
+        if (store.get().session == null) return
+        val row = buildJsonObject {
+            put("id", deviceId())
+            put("update_status", text.take(300))
+            put("update_status_at", System.currentTimeMillis())
+        }
+        runCatching { authed { api.upsert(T_DEVICES, "user_id,id", JsonArray(listOf(row)), it) } }
+            .onFailure { Log.w(TAG, "état de la mise à jour", it) }
     }
 
     private suspend fun pushRecordings() {
@@ -914,6 +1050,9 @@ class CloudSync(
         const val T_ITEMS = "list_items"
         const val T_RECORDINGS = "recordings"
         const val T_SEALED = "sealed_items"
+        const val T_DEVICES = "devices"
+        private const val DEVICE_REPORT_MS = 5 * 60_000L
+        private const val UPDATE_REQUEST_TTL_MS = 24 * 3600_000L
 
         /** Texte du bilan de connexion (null : rien à dire, l'appareil avait déjà ses playlists). */
         fun restoredMessage(restored: List<String>, hadPlaylists: Boolean, vault: VaultState): String? = when {

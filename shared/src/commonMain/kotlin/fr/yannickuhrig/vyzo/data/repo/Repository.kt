@@ -587,6 +587,12 @@ class Repository(
         changed()
     }
 
+    /** Contenus retirés de la reprise de lecture d'un profil depuis un autre endroit (site du compte) : déjà retirés du serveur. */
+    suspend fun removeProgress(profileId: String, contentKeys: List<String>) {
+        if (contentKeys.isEmpty()) return
+        contentKeys.chunked(500).forEach { db.progress().deleteWatchProgressByKeys(it, profileId) }
+    }
+
     /**
      * Purge l'historique de visionnage (chaînes récentes et reprises de lecture).
      * Retourne la liste des clés de contenu affectées (pour nettoyage Supabase ciblé).

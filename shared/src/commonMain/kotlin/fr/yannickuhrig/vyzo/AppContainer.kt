@@ -115,6 +115,7 @@ class AppContainer(
         }
         scope.launch { runCatching { localProfiles.removeForeign() } }
         cloud.onRemoteRecording = { recordings.applyRemote(it) }
+        scope.launch { cloud.updateRequests.collect { runCatching { remoteUpdate() } } }
         cloud.start()
         downloads.start()
         scope.launch { runCatching { parental.refreshAdultFlags() } }
@@ -123,6 +124,35 @@ class AppContainer(
         scope.launch { runCatching { settings.update { it.withForYouRow() } } }
         scope.launch {
             settings.flow.map { it.diagnosticLog }.distinctUntilChanged().collect { DiagLog.enabled = it }
+        }
+    }
+
+    /**
+     * Mise à jour demandée depuis le site du compte : même chemin que « Rechercher une mise à jour › Installer », et chaque
+     * étape est renvoyée au site. Sur Android 12+, l'installation se fait sans confirmation ; sinon le système la demande ici.
+     */
+    private suspend fun remoteUpdate() {
+        val state = updater.state.value
+        if (state is fr.yannickuhrig.vyzo.update.UpdateState.Downloading || state is fr.yannickuhrig.vyzo.update.UpdateState.Installing) {
+            cloud.reportUpdateStatus("Mise à jour déjà en cours")
+            return
+        }
+        cloud.reportUpdateStatus("Recherche d'une nouvelle version…")
+        val info = updater.check()
+        if (info == null) {
+            val failed = updater.state.value as? fr.yannickuhrig.vyzo.update.UpdateState.Failed
+            cloud.reportUpdateStatus(failed?.message ?: "Déjà à jour (${platform.appVersion})")
+            return
+        }
+        if (!updater.canInstall()) {
+            cloud.reportUpdateStatus("Version ${info.versionName} disponible, mais l'appareil n'autorise pas Vyzo à installer des applis")
+            return
+        }
+        cloud.reportUpdateStatus("Téléchargement de la version ${info.versionName}…")
+        updater.downloadAndInstall(info)
+        when (val after = updater.state.value) {
+            is fr.yannickuhrig.vyzo.update.UpdateState.Failed -> cloud.reportUpdateStatus("Échec : ${after.message}")
+            else -> cloud.reportUpdateStatus("Installation de la version ${info.versionName} lancée")
         }
     }
 
