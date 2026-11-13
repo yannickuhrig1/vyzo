@@ -1,11 +1,13 @@
 // Dérivé de DetailScreen.kt d'IPVIO Stream, Copyright (C) 2026 IPVIO Stream contributors, GNU GPL 3.
 // Modifié pour Vyzo le 2026-11-08 : saisons et épisodes branchés sur SeriesDetailViewModel, téléchargement par épisode, saut vers un épisode, libellés en français.
+// Modifié pour Vyzo le 2026-11-11 : épisode marqué vu ou non vu, la page ne suit plus la liste des épisodes (dernier épisode atteignable).
 package fr.yannickuhrig.vyzo.tv
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,8 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -41,6 +45,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -66,6 +71,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,6 +107,9 @@ private val genericEpisodeTitle = Regex("^(é|e|É|E)pisode\\s*\\d+$", RegexOpti
 /** Titre d'un épisode, sans répéter « Épisode 3 » quand l'abonnement n'en donne pas de vrai. */
 fun episodeTitle(episode: Int, title: String): String =
     if (title.isBlank() || genericEpisodeTitle.matches(title.trim())) "Épisode $episode" else "É$episode · $title"
+
+/** Libellé du bouton « Vu » d'un épisode quand on le sélectionne : ce que fera OK. */
+fun watchedActionLabel(watched: Boolean): String = if (watched) "Retirer « Vu »" else "Marquer comme vu"
 
 fun isWatched(positionMs: Long, durationMs: Long): Boolean = durationMs > 0 && positionMs >= durationMs * 0.95
 
@@ -187,112 +196,128 @@ fun TvSeriesDetail(
         runCatching { focusOf(target.uid).requestFocus() }
     }
 
-    DetailPage(enrichment?.backdropUrl ?: s.backdrop.ifBlank { s.poster }, page) {
-        item(key = "hero") {
-            DetailHero(
-                kicker = "SÉRIE",
-                title = s.name,
-                meta = listOf(s.year, s.genre.ifBlank { enrichment?.genres?.joinToString(" · ").orEmpty() }).filter { it.isNotBlank() },
-                rating = if (s.rating > 0f) s.rating else enrichment?.voteAverage ?: 0f,
-                tagline = enrichment?.tagline,
-                badges = detailBadges(enrichment?.certification, ratings),
-                plot = s.plot.ifBlank { enrichment?.overview.orEmpty() },
-                modifier = Modifier.scrollsToOnFocus(page, 0),
-            ) {
-                if (resume != null) {
-                    val (ep, pos) = resume
-                    HeroButton(
-                        (if (pos > 0) "Reprendre " else "Lire ") + "S${ep.season} É${ep.episode}",
-                        Icons.Default.PlayArrow, true, Modifier.focusRequester(firstButton), h = 44,
-                    ) { onPlayEpisode(ep, pos) }
-                }
-                HeroButton("Bande-annonce", Icons.Default.Movie, false, if (resume == null) Modifier.focusRequester(firstButton) else Modifier, h = 44) { showTrailer = true }
-                if (shown.isNotEmpty()) {
-                    HeroButton("Télécharger ${seasonLabel(season ?: 1).lowercase()}", Icons.Default.ArrowDownward, false, h = 44) { vm.downloadSeason(season ?: 1) }
-                }
-                if (eps.size >= JUMP_MIN_EPISODES) {
-                    HeroButton("Aller à l'épisode…", Icons.Default.Search, false, h = 44) { showJump = true }
-                }
-                if (resume != null) {
-                    val (ep, pos) = resume
-                    HeroButton("Caster", Icons.Default.Cast, false, h = 44) { showCast = true }
-                    HeroButton("Autre lecteur", Icons.AutoMirrored.Filled.OpenInNew, false, h = 44) {
-                        openInExternalPlayer(c, "${s.name} · S${ep.season} É${ep.episode}", startMs = pos) { c.repo.resolveEpisode(ep) }
-                    }
-                }
-                HeroButton(if (fav) "Favori" else "Ajouter aux favoris", if (fav) Icons.Default.Star else Icons.Default.StarBorder, false, h = 44) { vm.toggleFavorite() }
-            }
-        }
+    // La page ne suit pas la sélection dans le panneau des épisodes : seule la liste des épisodes défile,
+    // et jamais au-delà de ses bouts (sinon la page prenait le relais et É10 devenait inatteignable).
+    var paneFocused by remember { mutableStateOf(false) }
+    val platformSpec = LocalBringIntoViewSpec.current
+    val pageSpec = remember(platformSpec) { FrozenSpec(platformSpec) { paneFocused } }
+    val episodePivot = with(LocalDensity.current) { paneHeight.toPx() * 0.3f }
+    val episodeSpec = remember(episodePivot) { PivotSpec(episodePivot) { episodeList } }
 
-        if (seasons.isEmpty()) {
-            item(key = "status") {
-                when {
-                    loading -> Box(Modifier.fillMaxWidth().height(dpx(200)), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent1) }
-                    error != null -> Text(error!!, color = Color(0xFFFF8A80), fontSize = spx(19))
-                    else -> Text("Aucun épisode disponible.", color = Tok.TextLow, fontSize = spx(19))
-                }
-            }
-        } else {
-            item(key = "pane") {
-                Row(
-                    Modifier.fillMaxWidth().height(paneHeight)
-                        .scrollsToOnFocus(page, PANE_INDEX)
-                        .focusProperties { onEnter = { runCatching { seasonEntry.requestFocus() } } }
-                        .focusGroup(),
-                    horizontalArrangement = Arrangement.spacedBy(dpx(28)),
+    CompositionLocalProvider(LocalBringIntoViewSpec provides pageSpec) {
+        DetailPage(enrichment?.backdropUrl ?: s.backdrop.ifBlank { s.poster }, page) {
+            item(key = "hero") {
+                DetailHero(
+                    kicker = "SÉRIE",
+                    title = s.name,
+                    meta = listOf(s.year, s.genre.ifBlank { enrichment?.genres?.joinToString(" · ").orEmpty() }).filter { it.isNotBlank() },
+                    rating = if (s.rating > 0f) s.rating else enrichment?.voteAverage ?: 0f,
+                    tagline = enrichment?.tagline,
+                    badges = detailBadges(enrichment?.certification, ratings),
+                    plot = s.plot.ifBlank { enrichment?.overview.orEmpty() },
+                    modifier = Modifier.scrollsToOnFocus(page, 0),
                 ) {
-                    Column(
-                        Modifier.width(dpx(270)).fillMaxHeight().verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(dpx(4)),
-                    ) {
-                        seasons.forEach { n ->
-                            val own = remember(n) { FocusRequester() }
-                            SeasonEntry(
-                                label = seasonLabel(n),
-                                count = eps.count { it.season == n },
-                                selected = n == season,
-                                modifier = Modifier.focusRequester(if (n == season) seasonEntry else own),
-                                onFocus = { vm.season.value = n },
-                                onGoToEpisodes = { goToEpisodes() },
-                            )
+                    if (resume != null) {
+                        val (ep, pos) = resume
+                        HeroButton(
+                            (if (pos > 0) "Reprendre " else "Lire ") + "S${ep.season} É${ep.episode}",
+                            Icons.Default.PlayArrow, true, Modifier.focusRequester(firstButton), h = 44,
+                        ) { onPlayEpisode(ep, pos) }
+                    }
+                    HeroButton("Bande-annonce", Icons.Default.Movie, false, if (resume == null) Modifier.focusRequester(firstButton) else Modifier, h = 44) { showTrailer = true }
+                    if (shown.isNotEmpty()) {
+                        HeroButton("Télécharger ${seasonLabel(season ?: 1).lowercase()}", Icons.Default.ArrowDownward, false, h = 44) { vm.downloadSeason(season ?: 1) }
+                    }
+                    if (eps.size >= JUMP_MIN_EPISODES) {
+                        HeroButton("Aller à l'épisode…", Icons.Default.Search, false, h = 44) { showJump = true }
+                    }
+                    if (resume != null) {
+                        val (ep, pos) = resume
+                        HeroButton("Caster", Icons.Default.Cast, false, h = 44) { showCast = true }
+                        HeroButton("Autre lecteur", Icons.AutoMirrored.Filled.OpenInNew, false, h = 44) {
+                            openInExternalPlayer(c, "${s.name} · S${ep.season} É${ep.episode}", startMs = pos) { c.repo.resolveEpisode(ep) }
                         }
                     }
-                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(dpx(8))) {
-                        Text(
-                            "${seasonLabel(season ?: 1)} · ${episodesCount(shown.size)}",
-                            color = Tok.TextLow, fontSize = spx(17), maxLines = 1,
-                        )
-                        LazyColumn(
-                            Modifier.fillMaxSize(), state = episodeList,
-                            contentPadding = PaddingValues(vertical = dpx(8), horizontal = dpx(8)),
-                            verticalArrangement = Arrangement.spacedBy(dpx(10)),
-                        ) {
-                            items(shown, key = { it.uid }) { ep ->
-                                EpisodeRow(
-                                    ep = ep,
-                                    progress = progress[ep.uid],
-                                    quality = qualities[ep.uid],
-                                    tmdb = episodeMeta[ep.season to ep.episode],
-                                    download = downloads[ep.uid],
-                                    focus = focusOf(ep.uid),
-                                    onFocus = { lastEpisode = ep.uid },
-                                    onLeft = { runCatching { seasonEntry.requestFocus() } },
-                                    onDownload = { vm.downloadEpisode(ep) },
-                                    onPlay = {
-                                        lastEpisode = ep.uid
-                                        backFromEpisode = true
-                                        onPlayEpisode(ep, progress[ep.uid]?.let { episodeResumeMs(it.positionMs, it.durationMs) } ?: 0)
-                                    },
+                    HeroButton(if (fav) "Favori" else "Ajouter aux favoris", if (fav) Icons.Default.Star else Icons.Default.StarBorder, false, h = 44) { vm.toggleFavorite() }
+                }
+            }
+
+            if (seasons.isEmpty()) {
+                item(key = "status") {
+                    when {
+                        loading -> Box(Modifier.fillMaxWidth().height(dpx(200)), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent1) }
+                        error != null -> Text(error!!, color = Color(0xFFFF8A80), fontSize = spx(19))
+                        else -> Text("Aucun épisode disponible.", color = Tok.TextLow, fontSize = spx(19))
+                    }
+                }
+            } else {
+                item(key = "pane") {
+                    Row(
+                        Modifier.fillMaxWidth().height(paneHeight)
+                            .scrollsToOnFocus(page, PANE_INDEX)
+                            .onFocusChanged { paneFocused = it.hasFocus }
+                            .focusProperties { onEnter = { runCatching { seasonEntry.requestFocus() } } }
+                            .focusGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(dpx(28)),
+                    ) {
+                        CompositionLocalProvider(LocalBringIntoViewSpec provides SmoothSpec) {
+                            Column(
+                                Modifier.width(dpx(270)).fillMaxHeight().verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(dpx(4)),
+                            ) {
+                                seasons.forEach { n ->
+                                    val own = remember(n) { FocusRequester() }
+                                    SeasonEntry(
+                                        label = seasonLabel(n),
+                                        count = eps.count { it.season == n },
+                                        selected = n == season,
+                                        modifier = Modifier.focusRequester(if (n == season) seasonEntry else own),
+                                        onFocus = { vm.season.value = n },
+                                        onGoToEpisodes = { goToEpisodes() },
+                                    )
+                                }
+                            }
+                        }
+                        CompositionLocalProvider(LocalBringIntoViewSpec provides episodeSpec) {
+                            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(dpx(8))) {
+                                Text(
+                                    "${seasonLabel(season ?: 1)} · ${episodesCount(shown.size)}",
+                                    color = Tok.TextLow, fontSize = spx(17), maxLines = 1,
                                 )
+                                LazyColumn(
+                                    Modifier.fillMaxSize(), state = episodeList,
+                                    contentPadding = PaddingValues(vertical = dpx(8), horizontal = dpx(8)),
+                                    verticalArrangement = Arrangement.spacedBy(dpx(10)),
+                                ) {
+                                    items(shown, key = { it.uid }) { ep ->
+                                        EpisodeRow(
+                                            ep = ep,
+                                            progress = progress[ep.uid],
+                                            quality = qualities[ep.uid],
+                                            tmdb = episodeMeta[ep.season to ep.episode],
+                                            download = downloads[ep.uid],
+                                            focus = focusOf(ep.uid),
+                                            onFocus = { lastEpisode = ep.uid },
+                                            onLeft = { runCatching { seasonEntry.requestFocus() } },
+                                            onDownload = { vm.downloadEpisode(ep) },
+                                            onToggleWatched = { vm.toggleWatched(ep) },
+                                            onPlay = {
+                                                lastEpisode = ep.uid
+                                                backFromEpisode = true
+                                                onPlayEpisode(ep, progress[ep.uid]?.let { episodeResumeMs(it.positionMs, it.durationMs) } ?: 0)
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        if (cast.isNotEmpty()) item(key = "cast") { PeopleRow(cast) { person = it } }
-        if (similar.isNotEmpty()) item(key = "similar") { SimilarRow(similar.map { it.toVodItem() }) { onOpenSeries(it.uid) } }
+            if (cast.isNotEmpty()) item(key = "cast") { PeopleRow(cast) { person = it } }
+            if (similar.isNotEmpty()) item(key = "similar") { SimilarRow(similar.map { it.toVodItem() }) { onOpenSeries(it.uid) } }
+        }
     }
 
     if (showJump) {
@@ -378,6 +403,7 @@ private fun EpisodeRow(
     onFocus: () -> Unit,
     onLeft: () -> Unit,
     onDownload: () -> Unit,
+    onToggleWatched: () -> Unit,
     onPlay: () -> Unit,
 ) {
     val poster = ep.poster.ifBlank { tmdb?.stillUrl.orEmpty() }
@@ -431,7 +457,30 @@ private fun EpisodeRow(
                 if (plot.isNotBlank()) Text(plot, color = Tok.TextMid, fontSize = spx(18), lineHeight = spx(25), maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
         }
-        EpisodeDownload(download, onDownload)
+        Row(horizontalArrangement = Arrangement.spacedBy(dpx(14)), verticalAlignment = Alignment.CenterVertically) {
+            EpisodeWatched(watched, onToggleWatched)
+            EpisodeDownload(download, onDownload)
+        }
+    }
+}
+
+/** Bouton « Vu » d'un épisode, atteint avec ▶ depuis la ligne : il s'ouvre sur son libellé quand on le sélectionne. */
+@Composable
+private fun EpisodeWatched(watched: Boolean, onClick: () -> Unit) {
+    var f by remember { mutableStateOf(false) }
+    val tint = if (f) Tok.FocusInk else if (watched) Accent1 else Tok.TextMid
+    Row(
+        Modifier.height(dpx(64)).clip(RoundedCornerShape(50)).background(if (f) Tok.FocusFill else Color(0x14FFFFFF))
+            .onFocusChanged { f = it.isFocused }.clickable(onClick = onClick)
+            .padding(horizontal = dpx(17)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dpx(10)),
+    ) {
+        Icon(
+            if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
+            if (watched) "Vu, valider pour retirer" else "Marquer comme vu", Modifier.size(dpx(30)), tint = tint,
+        )
+        if (f) Text(watchedActionLabel(watched), color = tint, fontSize = spx(18), fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 

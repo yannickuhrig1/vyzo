@@ -28,6 +28,8 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
@@ -371,6 +373,12 @@ class SeriesDetailViewModel(private val c: AppContainer, val uid: String) : View
 
     fun toggleFavorite() = viewModelScope.launch { c.repo.toggleFavorite(uid, ContentKind.SERIES) }
 
+    /** Marque un épisode comme vu, ou le remet à « non vu » s'il l'était déjà (repris sur les autres appareils). */
+    fun toggleWatched(ep: EpisodeEntity) = viewModelScope.launch {
+        if (progress.value[ep.uid].finished()) c.repo.clearProgress(ep.uid)
+        else c.repo.markWatched(ep.uid, ContentKind.SERIES, uid, ep.durationSecs * 1_000L)
+    }
+
     /** Demande à TMDB, une seule fois par saison, les résumés et images de ses épisodes. */
     fun loadSeasonMeta(n: Int) {
         if (!seasonsAsked.add(n)) return
@@ -443,8 +451,10 @@ class SeriesDetailViewModel(private val c: AppContainer, val uid: String) : View
         val last = prog.values.maxByOrNull { it.updatedAt } ?: return eps.first() to 0L
         val idx = eps.indexOfFirst { it.uid == last.uid }
         if (idx < 0) return eps.first() to 0L
-        return if (last.positionMs < last.durationMs * 0.95) eps[idx] to last.positionMs
-        else eps.getOrNull(idx + 1)?.let { it to 0L } ?: (eps[idx] to 0L)
+        if (last.positionMs < last.durationMs * 0.95) return eps[idx] to last.positionMs
+        // L'épisode suivant a pu être commencé avant (un épisode marqué vu après coup) : on le reprend où il en était.
+        val next = eps.getOrNull(idx + 1) ?: return eps[idx] to 0L
+        return next to (prog[next.uid]?.takeUnless { it.finished() }?.positionMs ?: 0L)
     }
 }
 
@@ -598,6 +608,7 @@ fun SeriesDetailScreen(
                                 download = downloads[ep.uid],
                                 tmdb = episodeMeta[ep.season to ep.episode],
                                 onDownload = { vm.downloadEpisode(ep) },
+                                onToggleWatched = { vm.toggleWatched(ep) },
                                 onClick = { onPlayEpisode(ep, progress[ep.uid]?.resumeMs() ?: 0) },
                             )
                         }
@@ -616,6 +627,7 @@ fun SeriesDetailScreen(
                         download = downloads[ep.uid],
                         tmdb = episodeMeta[ep.season to ep.episode],
                         onDownload = { vm.downloadEpisode(ep) },
+                        onToggleWatched = { vm.toggleWatched(ep) },
                         onClick = { onPlayEpisode(ep, progress[ep.uid]?.resumeMs() ?: 0) },
                     )
                 }
@@ -707,6 +719,9 @@ fun findEpisode(eps: List<EpisodeEntity>, currentSeason: Int?, text: String): Ep
 
 private fun WatchProgressEntity.resumeMs(): Long = if (positionMs < durationMs * 0.95) positionMs else 0
 
+/** Vu jusqu'au bout (95 % au moins). */
+fun WatchProgressEntity?.finished(): Boolean = this != null && durationMs > 0 && positionMs >= durationMs * 0.95
+
 @Composable
 private fun EpisodeRow(
     ep: EpisodeEntity,
@@ -714,6 +729,7 @@ private fun EpisodeRow(
     download: DownloadEntity? = null,
     tmdb: TmdbEpisode? = null,
     onDownload: (() -> Unit)? = null,
+    onToggleWatched: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val poster = ep.poster.ifBlank { tmdb?.stillUrl.orEmpty() }
@@ -740,6 +756,17 @@ private fun EpisodeRow(
                 if (plot.isNotBlank()) Text(plot, style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (progress != null && progress.durationMs > 0) {
                     ProgressLine(progress.positionMs.toFloat() / progress.durationMs, Modifier.fillMaxWidth(0.6f).padding(top = 5.dp))
+                }
+            }
+            if (onToggleWatched != null) {
+                val watched = progress.finished()
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onToggleWatched, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
+                        contentDescription = if (watched) "Vu (cliquer pour retirer)" else "Marquer comme vu",
+                        tint = if (watched) VyzoColors.Amber else VyzoColors.TextDim,
+                    )
                 }
             }
             if (onDownload != null) {

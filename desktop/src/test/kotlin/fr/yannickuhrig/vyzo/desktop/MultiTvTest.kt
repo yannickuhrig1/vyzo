@@ -51,7 +51,11 @@ import fr.yannickuhrig.vyzo.ui.player.PlayerScreen
 import fr.yannickuhrig.vyzo.ui.player.PlayerViewModel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import fr.yannickuhrig.vyzo.platform.Platform
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,9 +82,9 @@ class MultiTvTest {
         override val lifecycle = LifecycleRegistry.createUnsafe(this).apply { currentState = Lifecycle.State.RESUMED }
     }
 
-    private inner class Tv(extraPlaylistsBefore: Int = 0) {
+    private inner class Tv(extraPlaylistsBefore: Int = 0, decorate: (Platform) -> Platform = { it }) {
         val dir: File = Files.createTempDirectory("vyzo-tv").toFile()
-        val c: AppContainer = testContainer(dir, supa.url("/").toString().trimEnd('/'))
+        val c: AppContainer = testContainer(dir, supa.url("/").toString().trimEnd('/'), decorate)
         val pid: Long = runBlocking {
             repeat(extraPlaylistsBefore) { c.db.playlists().insert(PlaylistEntity(name = "Autre", type = SourceType.M3U, url = "file:///autre$it")) }
             val id = c.db.playlists().insert(PlaylistEntity(name = "Abonnement", type = SourceType.M3U, url = "http://fournisseur/liste.m3u", lastSync = 1))
@@ -416,5 +420,126 @@ class MultiTvTest {
         val armed = System.currentTimeMillis()
         rule.waitUntil(20_000) { tv.c.player.tag.value == "episode:${tv.e2}" }
         val waited = System.currentTimeMillis() - armed
+    }
+
+    /**
+     * Repères de TheIntroDB pour la série de test (fichier de 300 s) : récap 2-12 s, intro 20-80 s, générique à 250 s.
+     * La série est retrouvée par son titre sur TVmaze ; les deux services passent par un faux serveur.
+     */
+    private fun Tv.withMarkers(sure: Boolean = true): MockWebServer {
+        val api = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                    "/search/shows" -> MockResponse().setBody(
+                        """[{"score":0.9,"show":{"name":"Série","premiered":null,"externals":{"imdb":"tt0000001","thetvdb":null}}}]""",
+                    )
+                    "/v4/media" -> {
+                        val n = if (sure) 3 else 1
+                        MockResponse().setBody(
+                            """{"group_duration_ms":300000,
+                            "recap":[{"start_ms":2000,"end_ms":12000,"confidence":0.8,"submission_count":$n}],
+                            "intro":[{"start_ms":20000,"end_ms":80000,"confidence":0.8,"submission_count":$n}],
+                            "credits":[{"start_ms":250000,"end_ms":null,"confidence":0.8,"submission_count":$n}]}""",
+                        )
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+            start()
+        }
+        c.tvMaze.baseUrl = api.url("/").toString().trimEnd('/')
+        c.introDb.baseUrl = api.url("/v4").toString()
+        return api
+    }
+
+    /** Sans clé TMDB : la série est cherchée sur TVmaze (le faux serveur), jamais sur le vrai TMDB. */
+    private fun noTmdb(p: Platform): Platform = object : Platform by p { override val tmdbBuiltInKey: String = "" }
+
+    private fun waitPosition(tv: Tv, what: String, timeoutMs: Long = 15_000, cond: (Long) -> Boolean) {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            if (cond(tv.c.player.currentPosition)) return
+            rule.mainClock.advanceTimeBy(200)
+            Thread.sleep(100)
+        }
+        throw AssertionError("$what (position ${tv.c.player.currentPosition})")
+    }
+
+    /** Télécommande : sur un vrai récap puis une vraie intro, le bouton s'annonce et OK saute à la fin du passage. */
+    @Test
+    fun passerRecapEtIntroALaTelecommande() = runBlocking {
+        val tv = Tv(decorate = ::noTmdb)
+        val api = tv.withMarkers()
+        try {
+            showPlayer(tv.c, PlayKind.EPISODE, tv.e1, start = START_FROM_BEGINNING)
+            rule.waitUntil(20_000) { tv.c.player.status.value.isPlaying && tv.c.player.duration > 0 }
+            tv.c.player.seekTo(4_000)
+            rule.waitUntil(15_000) { exists("Passer le récap · OK") }
+            press(Key.DirectionCenter)
+            waitPosition(tv, "OK doit sauter le récap jusqu'à 12 s") { it in 12_000L..19_000L }
+            waitFor("la lecture doit reprendre après le saut, pas se mettre en pause : ${tv.c.player.status.value}", 4_000) { tv.c.player.status.value.isPlaying }
+
+            tv.c.player.seekTo(25_000)
+            rule.waitUntil(10_000) { exists("Passer l'intro · OK") }
+            press(Key.DirectionCenter)
+            waitPosition(tv, "OK doit sauter l'intro jusqu'à 80 s") { it >= 80_000L }
+            waitFor("la lecture doit reprendre après le saut, pas se mettre en pause : ${tv.c.player.status.value}", 4_000) { tv.c.player.status.value.isPlaying }
+        } finally {
+            api.shutdown()
+        }
+    }
+
+    /** Options « sauter les récaps » et « sauter les intros », données sûres : les deux passages sautent seuls. */
+    @Test
+    fun sautAutoDuRecapEtDeLIntro() = runBlocking {
+        val tv = Tv(decorate = ::noTmdb)
+        val api = tv.withMarkers()
+        tv.c.settings.update { it.copy(autoSkipIntro = true, autoSkipRecap = true) }
+        try {
+            tv.watch(PlayKind.EPISODE, tv.e1, startMs = START_FROM_BEGINNING) {
+                waitFor("le récap doit sauter seul", 20_000) { tv.c.player.currentPosition in 12_000L..19_000L }
+                waitFor("l'intro doit sauter seule", 20_000) { tv.c.player.currentPosition >= 80_000L }
+            }
+        } finally {
+            api.shutdown()
+        }
+    }
+
+    /** Données peu sûres (une seule contribution) : rien ne saute seul, même avec les options cochées. */
+    @Test
+    fun donneesPeuSuresPasDeSautAuto() = runBlocking {
+        val tv = Tv(decorate = ::noTmdb)
+        val api = tv.withMarkers(sure = false)
+        tv.c.settings.update { it.copy(autoSkipIntro = true, autoSkipRecap = true) }
+        try {
+            tv.watch(PlayKind.EPISODE, tv.e1, startMs = START_FROM_BEGINNING) {
+                tv.c.player.seekTo(18_000)
+                Thread.sleep(6_000)
+                val pos = tv.c.player.currentPosition
+                assertTrue("rien ne doit sauter, position $pos", pos in 18_000L..40_000L)
+            }
+        } finally {
+            api.shutdown()
+        }
+    }
+
+    /** Générique connu à 250 s : la carte « Épisode suivant » attend le générique au lieu des 90 dernières secondes. */
+    @Test
+    fun carteEpisodeSuivantAuVraiGenerique() = runBlocking {
+        val tv = Tv(decorate = ::noTmdb)
+        val api = tv.withMarkers()
+        try {
+            showPlayer(tv.c, PlayKind.EPISODE, tv.e1, start = START_FROM_BEGINNING)
+            rule.waitUntil(20_000) { tv.c.player.status.value.isPlaying && tv.c.player.duration > 0 }
+            rule.waitUntil(15_000) { exists("Passer le récap") || tv.c.player.currentPosition > 12_000 }
+            tv.c.player.seekTo(225_000)
+            val end = System.currentTimeMillis() + 3_000
+            while (System.currentTimeMillis() < end) { rule.mainClock.advanceTimeBy(500); Thread.sleep(100) }
+            assertFalse("avant le générique, pas de carte", exists("Rester"))
+            tv.c.player.seekTo(252_000)
+            rule.waitUntil(10_000) { exists("Rester") }
+        } finally {
+            api.shutdown()
+        }
     }
 }

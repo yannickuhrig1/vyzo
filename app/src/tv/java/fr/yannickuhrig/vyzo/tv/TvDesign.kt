@@ -112,3 +112,13 @@ class PivotSpec(private val target: Float, private val list: () -> LazyListState
         return pivotDistance(offset, target, st.canScrollBackward, st.canScrollForward)
     }
 }
+
+/**
+ * Défilement de [base], suspendu tant que [frozen] est vrai. Sur la fiche d'une série, la page ne bouge plus d'elle-même
+ * quand la télécommande est dans les épisodes : au bout de la liste, elle partait vers le bas et É10 devenait inatteignable.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+class FrozenSpec(private val base: BringIntoViewSpec, private val frozen: () -> Boolean) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        if (frozen()) 0f else base.calculateScrollDistance(offset, size, containerSize)
+}

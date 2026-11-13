@@ -48,6 +48,11 @@ class TvDetailLogicTest {
         assertFalse(isWatched(0, 0))
     }
 
+    @Test fun `libelle du bouton vu`() {
+        assertEquals("Marquer comme vu", watchedActionLabel(false))
+        assertEquals("Retirer « Vu »", watchedActionLabel(true))
+    }
+
     @Test fun `le titre de la fiche retrecit quand il est long`() {
         assertEquals(84, detailTitleSize("Le Grand Bain"))
         assertEquals(64, detailTitleSize("Un titre de film un peu plus long"))
@@ -117,6 +122,16 @@ class TvDetailScreenTest : ScreensBase() {
         }
     }
 
+    /** La base prévient l'écran depuis un autre fil : on lui laisse jusqu'à 3 secondes. */
+    private fun until(done: () -> Boolean) {
+        repeat(60) {
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+            if (done()) return
+            Thread.sleep(50)
+        }
+    }
+
     private fun focusedText(): String {
         val node = compose.onNode(isFocused()).fetchSemanticsNode()
         return node.config.getOrNull(SemanticsProperties.Text)?.joinToString(" ") { it.text }.orEmpty()
@@ -169,6 +184,29 @@ class TvDetailScreenTest : ScreensBase() {
         compose.onNode(isFocused()).performKeyInputEnter()
         compose.waitForIdle()
         assertNotNull(played)
+    }
+
+    /** ▶ depuis un épisode mène au bouton « Vu » : OK le marque vu, OK encore le remet à non vu. */
+    @Test fun episodeVuPuisNonVu() {
+        shoot("tv_38_episode_vu", FormFactor.TV, 3000, capture = false, after = {
+            downToSeasons()
+            press(Key.DirectionRight)
+            press(Key.DirectionRight)
+        }) { Series() }
+        assertEquals("Marquer comme vu", focusedText())
+        val first = "$playlistId:S:701:9001"
+        fun watched() = runBlocking { app.container.repo.progressNow(first) }.let { it != null && isWatched(it.positionMs, it.durationMs) }
+        assertFalse(watched())
+
+        compose.onNode(isFocused()).performKeyInputEnter()
+        until { focusedText() == "Retirer « Vu »" }
+        assertTrue("L'épisode doit être vu", watched())
+        assertEquals("Retirer « Vu »", focusedText())
+
+        compose.onNode(isFocused()).performKeyInputEnter()
+        until { focusedText() == "Marquer comme vu" }
+        assertFalse("L'épisode ne doit plus être vu", watched())
+        assertEquals("Marquer comme vu", focusedText())
     }
 
     @OptIn(ExperimentalTestApi::class)
