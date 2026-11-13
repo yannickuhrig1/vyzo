@@ -1,8 +1,8 @@
 // Dérivé de HomeScreen.kt, HomeParts.kt et Billboard.kt d'IPVIO Stream, Copyright (C) 2026 IPVIO Stream contributors, GNU GPL 3.
 // Modifié pour Vyzo le 2026-11-08 : accueil alimenté par HomeViewModel (profils, contrôle parental, personnalisation), horloge, météo et applications de Vyzo.
+// Modifié pour Vyzo le 2026-11-13 : image et informations du titre déplacées dans TvSection.kt.
 package fr.yannickuhrig.vyzo.tv
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -35,7 +34,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,18 +50,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import fr.yannickuhrig.vyzo.data.db.ChannelEntity
 import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.home.HomeRows
@@ -163,10 +157,17 @@ fun TvHome(actions: HomeActions) {
     }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
-        HomeBackdrop(shown, Modifier.fillMaxSize())
+        SectionBackdrop(shown, Modifier.fillMaxSize())
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().height(TopZoneH).padding(start = dpx(48), end = dpx(40), top = dpx(24))) {
-                Box(Modifier.weight(1f)) { shown?.let { HomeInfo(it, onOpen = { openVod(it) }) } }
+                Box(Modifier.weight(1f)) {
+                    shown?.let {
+                        Column(verticalArrangement = Arrangement.spacedBy(dpx(10))) {
+                            SectionInfo(it)
+                            HeroButton("Plus d'infos", Icons.Default.Info, true, h = 46, onClick = { openVod(it) })
+                        }
+                    }
+                }
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(dpx(14))) {
                     if (settings.homeClock) Clock(tv = true)
                     Row(horizontalArrangement = Arrangement.spacedBy(dpx(14)), verticalAlignment = Alignment.CenterVertically) {
@@ -204,80 +205,6 @@ fun TvHome(actions: HomeActions) {
         ChannelMenu(ch, onDismiss = { channelMenu = null }, onWatch = { actions.onPlayChannel(ch.uid, group) })
     }
     if (weatherOpen) WeatherDialog(place?.name.orEmpty(), weather) { weatherOpen = false }
-}
-
-private val HomeScrimX = listOf(0f to 1f, 0.24f to .94f, 0.48f to .5f, 0.72f to 0f)
-private val HomeScrimY = listOf(0f to .5f, 0.16f to 0f, 0.38f to 0f, 0.58f to .82f, 0.78f to 1f)
-
-/** Image plein écran du titre, fondue dans le fond à gauche (texte) et en bas (rangées). */
-@Composable
-private fun HomeBackdrop(item: VodItem?, modifier: Modifier) {
-    Box(modifier.background(Bg)) {
-        Crossfade(item?.let { it.backdrop.ifBlank { it.poster } }, animationSpec = tween(if (Look.motion == 0) 0 else 600), label = "backdrop") { url ->
-            if (!url.isNullOrBlank()) AsyncImage(cardBackdrop(url), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopEnd)
-        }
-        BakedScrim(HomeScrimX, HomeScrimY, Modifier.fillMaxSize())
-    }
-}
-
-/** Taille du titre selon sa longueur : il tient toujours sur une ligne au-dessus des rangées. */
-fun heroTitleSize(title: String): Int = if (title.length <= 24) 72 else if (title.length <= 34) 60 else 48
-
-/** Informations du titre mis en avant, en haut à gauche. */
-@Composable
-private fun HomeInfo(item: VodItem, onOpen: () -> Unit) {
-    Column(Modifier.widthIn(max = dpx(980)), verticalArrangement = Arrangement.spacedBy(dpx(10))) {
-        Crossfade(item, animationSpec = tween(if (Look.motion == 0) 0 else 450), label = "info") { c ->
-            Column(verticalArrangement = Arrangement.spacedBy(dpx(10))) {
-                Kicker(if (c.kind == ContentKind.MOVIE) "FILM" else "SÉRIE")
-                Text(
-                    c.title, color = Tok.TextHi, fontSize = spx(heroTitleSize(c.title)), lineHeight = spx(76),
-                    fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                MetaLine(c)
-                if (c.plot.isNotBlank()) {
-                    Text(c.plot, color = Tok.TextMid, fontSize = spx(19), lineHeight = spx(29), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-        HeroButton("Plus d'infos", Icons.Default.Info, true, h = 46, onClick = onOpen)
-    }
-}
-
-/** Petite ligne au-dessus du titre, avec une barre lumineuse à la couleur de l'appli. */
-@Composable
-fun Kicker(text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(12))) {
-        Box(
-            Modifier.width(dpx(5)).height(dpx(24)).shadow(dpx(10), RoundedCornerShape(50), ambientColor = Accent1, spotColor = Accent1)
-                .clip(RoundedCornerShape(50)).background(Accent1),
-        )
-        Text(text, color = Accent2, fontSize = spx(17), fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp, maxLines = 1)
-    }
-}
-
-/** « 2016 | Aventure | ★ 7,6 ». */
-@Composable
-private fun MetaLine(item: VodItem) {
-    val parts = listOf(item.year, firstGenre(item.genre)).filter { it.isNotBlank() }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
-        parts.forEachIndexed { i, p ->
-            if (i > 0) Separator()
-            Text(p, color = Color(0xFFD4D4DA), fontSize = spx(17), maxLines = 1)
-        }
-        if (item.rating > 0f) {
-            if (parts.isNotEmpty()) Separator()
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(5))) {
-                Icon(Icons.Default.Star, null, Modifier.size(dpx(18)), tint = Accent1)
-                Text("%.1f".format(item.rating), color = Accent1, fontSize = spx(17), fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-@Composable
-fun Separator() {
-    Box(Modifier.width(dpx(1)).height(dpx(16)).background(Color(0x66FFFFFF)))
 }
 
 /** Espaces d'une rangée, repris par le calage vertical de la liste. */

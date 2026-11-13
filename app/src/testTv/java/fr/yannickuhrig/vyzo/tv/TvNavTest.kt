@@ -105,6 +105,20 @@ class TvNavLogicTest {
         assertEquals(listOf(a), filterCards(all, 8f, 1))
     }
 
+    @Test fun `titre en grand meme sans image de fond ni resume`() {
+        val nu = VodCard("n", "Sans rien", rating = 9f)
+        val affiche = VodCard("a", "Affiche", poster = "p", rating = 7f)
+        val autre = VodCard("b", "Affiche moins notée", poster = "p", rating = 6f)
+        val fond = VodCard("f", "Fond", backdrop = "b", rating = 5f)
+        // Liste de films Xtream : ni fond ni résumé, le mieux noté qui a une affiche passe devant.
+        assertEquals("a", tvHeroPick(listOf(nu, autre, affiche), null)?.uid)
+        // Dès qu'un titre a une image de fond, le choix du bandeau reste prioritaire.
+        assertEquals("f", tvHeroPick(listOf(nu, affiche, fond), null)?.uid)
+        // Sans affiche non plus, le premier titre ; une catégorie vide garde l'en-tête simple.
+        assertEquals("n", tvHeroPick(listOf(nu), null)?.uid)
+        assertEquals(null, tvHeroPick(emptyList(), null))
+    }
+
     @Test fun `legende d une affiche`() {
         assertEquals("2016 · Drame", fr.yannickuhrig.vyzo.ui.vod.vodCardMeta("2016-05-01", "Drame"))
         assertEquals("2016", fr.yannickuhrig.vyzo.ui.vod.vodCardMeta("2016", ""))
@@ -374,7 +388,34 @@ class TvNavScreenTest : ScreensBase() {
             compose.onNodeWithText("8 et plus").performClick()
             settle()
         }) { Remote { TvBrowse(ContentKind.MOVIE, {}) } }
-        compose.onNodeWithText("2 titres").fetchSemanticsNode()
+        // Le nombre de titres est dans la petite ligne au-dessus du titre en grand.
+        compose.onNodeWithText("2 TITRES", substring = true).fetchSemanticsNode()
+    }
+
+    /** Avec image et résumé, Films reprend le haut de l'accueil : la carte sélectionnée passe en grand au-dessus de la grille. */
+    @Test fun filmsTitreMisEnAvant() {
+        runBlocking {
+            val bmp = android.graphics.Bitmap.createBitmap(640, 360, android.graphics.Bitmap.Config.ARGB_8888)
+            val paint = android.graphics.Paint().apply {
+                shader = android.graphics.LinearGradient(0f, 0f, 640f, 360f, 0xFFE0566B.toInt(), 0xFF3F8EE8.toInt(), android.graphics.Shader.TileMode.CLAMP)
+            }
+            android.graphics.Canvas(bmp).drawRect(0f, 0f, 640f, 360f, paint)
+            val file = java.io.File.createTempFile("fond", ".png")
+            file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            // Simulateur : la bibliothèque native s'initialise ici, car sur le fil de décodage des images elle provoque un arrêt brutal.
+            bmp.copyPixelsToBuffer(java.nio.IntBuffer.allocate(640 * 360))
+            val url = "file://${file.absolutePath}"
+            val movies = app.container.db.movies().recentlyAdded(listOf(playlistId), false).first()
+            app.container.db.movies().upsert(movies.map {
+                it.copy(backdrop = url, plot = "Un ancien détenu devient l'aide à domicile d'un riche tétraplégique : une amitié improbable, drôle et touchante.")
+            })
+        }
+        shoot("tv_38_films_titre_en_avant", FormFactor.TV, 3000, after = {
+            press(Key.DirectionRight)
+            settle(2500)
+        }) { Remote { TvBrowse(ContentKind.MOVIE, {}) } }
+        compose.onNodeWithText("Plus d'infos").assertDoesNotExist()
+        compose.onAllNodesWithText("Intouchables").assertCountEquals(2)
     }
 
     /** La page d'un acteur liste ses titres de l'abonnement. */

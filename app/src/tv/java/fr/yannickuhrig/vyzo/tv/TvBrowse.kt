@@ -1,6 +1,7 @@
 // Dérivé de BrowseScreen.kt et Dropdown.kt d'IPVIO Stream, Copyright (C) 2026 IPVIO Stream contributors, GNU GPL 3.
 // Modifié pour Vyzo le 2026-11-08 : catégories, tris et contrôle parental de Vyzo, filtres sur les données du catalogue, libellés en français.
 // Modifié pour Vyzo le 2026-11-10 : rubriques dans la liste des catégories, bandeau du titre sélectionné, voisines atténuées.
+// Modifié pour Vyzo le 2026-11-13 : image plein écran et titre mis en avant repris de l'accueil, au-dessus de la grille.
 package fr.yannickuhrig.vyzo.tv
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -80,20 +82,26 @@ import fr.yannickuhrig.vyzo.ui.vod.VodSortOrder
 import fr.yannickuhrig.vyzo.ui.vod.VodViewModel
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.layout.ContentScale
-import coil3.compose.AsyncImage
 import fr.yannickuhrig.vyzo.ui.common.LocalContainer
-import fr.yannickuhrig.vyzo.ui.common.posterColor
 import fr.yannickuhrig.vyzo.ui.vod.VodCategoryLine
-import fr.yannickuhrig.vyzo.ui.vod.vodCardMeta
 import fr.yannickuhrig.vyzo.ui.vod.vodCategoryLines
 import fr.yannickuhrig.vyzo.ui.vod.vodSpotlightPick
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-private const val GRID_COLUMNS = 6
+// Sept colonnes, comme les affiches de l'accueil : la liste des catégories plus étroite laisse la place.
+private const val GRID_COLUMNS = 7
+
+/** Largeur de la liste des catégories et hauteur du titre mis en avant, en pixels de maquette. */
+private const val RAIL_W = 360
+private const val HERO_H = 276
+
+/**
+ * Voile de l'image : le texte commence après la liste des catégories, le sombre de gauche va donc plus loin qu'à l'accueil ;
+ * la grille commence plus haut, l'image s'efface donc plus tôt en bas.
+ */
+private val BrowseScrimX = listOf(0f to 1f, 0.36f to .94f, 0.6f to .6f, 0.86f to 0f)
+private val BrowseScrimY = listOf(0f to .45f, 0.14f to 0f, 0.28f to 0f, 0.44f to .85f, 0.6f to 1f)
 
 internal val RATING_LABELS = listOf("Toutes les notes", "5 et plus", "6 et plus", "7 et plus", "8 et plus", "9 et plus")
 internal val RATING_VALUES = listOf(0f, 5f, 6f, 7f, 8f, 9f)
@@ -116,6 +124,16 @@ internal fun filterCards(list: List<VodCard>, minRating: Float, period: Int): Li
     if (minRating <= 0f && period == 0) list else list.filter { it.rating >= minRating && inPeriod(it.year, period) }
 
 private fun VodCard.toVodItem(kind: ContentKind) = VodItem(kind, uid, title, poster, backdrop, rating, year, genre, plot, uhd)
+
+/**
+ * Titre en grand tant que rien n'est sélectionné. Sur TV, il sert d'en-tête à l'écran : il s'affiche même quand
+ * la liste n'a ni image de fond ni résumé (cas des films Xtream, complétés seulement à l'ouverture de leur fiche).
+ * D'abord le choix du bandeau, sinon le mieux noté qui a une affiche, sinon le premier titre.
+ */
+internal fun tvHeroPick(items: List<VodCard>, selected: String?): VodCard? =
+    vodSpotlightPick(items, selected)
+        ?: items.filter { it.poster.isNotBlank() && it.rating <= 10f }.maxByOrNull { it.rating }
+        ?: items.firstOrNull()
 
 /** Films ou séries : catégories à gauche, filtres et affiches à droite. */
 @Composable
@@ -184,9 +202,28 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
 
     val title = cats.firstOrNull { it.key == selected }?.title ?: if (kind == ContentKind.MOVIE) "Films" else "Séries"
 
-    Row(Modifier.fillMaxSize().background(Bg).padding(top = dpx(24))) {
+    // Titre mis en avant : celui de la carte sélectionnée, après un court arrêt (la grande image ne se charge pas à chaque flèche).
+    val list0 = shown
+    val pick = remember(list0, selected) { list0?.let { tvHeroPick(it, selected) } }
+    // Seule une catégorie vide garde l'en-tête simple : un titre sans image de fond prend son affiche.
+    val heroOn = spotlightOn && list0 != null && pick != null
+    var spot by remember { mutableStateOf<VodItem?>(null) }
+    LaunchedEffect(heroOn, focusedIndex, list0, pick) {
+        if (!heroOn || list0 == null) {
+            spot = null
+            return@LaunchedEffect
+        }
+        val target = (list0.getOrNull(focusedIndex) ?: pick)?.toVodItem(kind)
+        if (spot != null && target != spot) delay(300)
+        spot = target
+    }
+    val hero = spot.takeIf { heroOn }
+
+    Box(Modifier.fillMaxSize().background(Bg)) {
+    if (hero != null) SectionBackdrop(hero, Modifier.fillMaxSize(), BrowseScrimX, BrowseScrimY)
+    Row(Modifier.fillMaxSize().padding(top = dpx(24))) {
         LazyColumn(
-            Modifier.width(dpx(420)).fillMaxHeight().focusRestorer(),
+            Modifier.width(dpx(RAIL_W)).fillMaxHeight().focusRestorer(),
             state = catList,
             contentPadding = PaddingValues(start = dpx(20), end = dpx(12), bottom = dpx(40)),
             verticalArrangement = Arrangement.spacedBy(dpx(4)),
@@ -207,10 +244,8 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                 }
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(start = dpx(16), end = dpx(36))) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
-                Text(title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                shown?.let { Text(if (it.size == 1) "1 titre" else "${it.size} titres", color = Tok.TextLow, fontSize = spx(17), maxLines = 1, modifier = Modifier.weight(1f)) }
+        Column(Modifier.weight(1f).fillMaxHeight().padding(start = dpx(28), end = dpx(36))) {
+            val counter: @Composable () -> Unit = {
                 if (!shown.isNullOrEmpty() && focusedIndex >= 0) {
                     Text(
                         "${minOf(focusedIndex + 1, shown.size)} / ${shown.size}", color = Color.White, fontSize = spx(15), fontWeight = FontWeight.Bold, maxLines = 1,
@@ -218,8 +253,21 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                     )
                 }
             }
+            val count = shown?.let { if (it.size == 1) "1 titre" else "${it.size} titres" }
+            if (hero != null) {
+                // Hauteur fixe : la grille ne saute pas d'un titre à l'autre.
+                Box(Modifier.fillMaxWidth().height(dpx(HERO_H)), contentAlignment = Alignment.TopStart) {
+                    SectionInfo(hero, kicker = listOfNotNull(title, count).joinToString(" · ").uppercase(), titleScale = 0.8f, maxWidth = 860)
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
+                    Text(title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    count?.let { Text(it, color = Tok.TextLow, fontSize = spx(17), maxLines = 1, modifier = Modifier.weight(1f)) }
+                    counter()
+                }
+            }
             if (!items.isNullOrEmpty()) {
-                Row(Modifier.padding(top = dpx(14)), horizontalArrangement = Arrangement.spacedBy(dpx(10)), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(top = dpx(14)), horizontalArrangement = Arrangement.spacedBy(dpx(10)), verticalAlignment = Alignment.CenterVertically) {
                     val orders = VodSortOrder.entries
                     DropdownPill("Tri", sort.label, orders.map { it.label }, orders.indexOf(sort), active = sort != VodSortOrder.ALPHABETICAL, Icons.AutoMirrored.Filled.Sort) { vm.setSortOrder(orders[it]) }
                     DropdownPill("Note", RATING_LABELS[ratingIndex], RATING_LABELS, ratingIndex, active = ratingIndex != 0, Icons.Default.Star) { ratingIndex = it }
@@ -230,20 +278,11 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                             period = 0
                         }
                     }
+                    if (hero != null) {
+                        Spacer(Modifier.weight(1f))
+                        counter()
+                    }
                 }
-            }
-            // Bandeau du titre sélectionné : il change après un court arrêt, pas à chaque appui sur la flèche.
-            val list0 = shown
-            val pick = remember(list0, selected) { list0?.let { vodSpotlightPick(it, selected) } }
-            // Sans titre à montrer dans la liste (ni image de fond ni résumé), pas de bandeau du tout.
-            if (spotlightOn && list0 != null && pick != null) {
-                var spot by remember { mutableStateOf<VodCard?>(null) }
-                LaunchedEffect(focusedIndex, list0, pick) {
-                    val target = list0.getOrNull(focusedIndex) ?: pick
-                    if (spot != null && target != spot) delay(180)
-                    spot = target
-                }
-                spot?.let { TvSpotlight(it, Modifier.padding(top = dpx(16))) }
             }
             var gridFocused by remember { mutableStateOf(false) }
             Box(Modifier.weight(1f).fillMaxWidth().onFocusChanged { gridFocused = it.hasFocus }) {
@@ -278,6 +317,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
             }
         }
     }
+    }
 }
 
 private fun emptyTitle(selected: String?) = when (selected) {
@@ -294,48 +334,6 @@ private fun SectionHeader(text: String, first: Boolean) {
         text.uppercase(), color = Tok.TextLow.copy(alpha = 0.8f), fontSize = spx(14), fontWeight = FontWeight.Bold, letterSpacing = spx(2.2),
         maxLines = 1, modifier = Modifier.padding(start = dpx(18), top = dpx(if (first) 2 else 22), bottom = dpx(8)),
     )
-}
-
-/**
- * Bandeau du titre sélectionné, au-dessus de la grille : image de fond fondue dans le fond de l'écran,
- * note, année, genre, 4K, titre et deux lignes de résumé. Hauteur fixe : la grille ne saute pas d'un titre à l'autre.
- */
-@Composable
-private fun TvSpotlight(card: VodCard, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(dpx(18))
-    val base = remember(card.title, card.genre) { posterColor(card.title, card.genre) }
-    Box(
-        modifier.fillMaxWidth().height(dpx(196)).clip(shape)
-            .background(Brush.linearGradient(listOf(lerp(base, Bg, 0.6f), Surf, Bg)))
-            .border(1.dp, Tok.Line, shape),
-    ) {
-        if (card.backdrop.isNotBlank()) {
-            AsyncImage(cardBackdrop(card.backdrop), null, Modifier.fillMaxHeight().fillMaxWidth(0.62f).align(Alignment.CenterEnd), contentScale = ContentScale.Crop)
-            Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to Bg, 0.42f to Bg.copy(alpha = 0.9f), 1f to Bg.copy(alpha = 0.1f))))
-        }
-        Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(base.copy(alpha = 0.3f), Color.Transparent), radius = 900f)))
-        Column(
-            Modifier.fillMaxHeight().fillMaxWidth(0.7f).padding(horizontal = dpx(30), vertical = dpx(20)),
-            verticalArrangement = Arrangement.spacedBy(dpx(8), Alignment.CenterVertically),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(12))) {
-                if (card.rating > 0f && card.rating <= 10f) {
-                    Icon(Icons.Default.Star, null, Modifier.size(dpx(20)), tint = Accent1)
-                    Text("%.1f".format(card.rating), color = Accent1, fontSize = spx(16), fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-                val meta = vodCardMeta(card.year, card.genre)
-                if (meta.isNotBlank()) Text(meta, color = Tok.TextMid, fontSize = spx(16), maxLines = 1)
-                if (card.uhd) {
-                    Text(
-                        "4K", color = Color.White, fontSize = spx(13), fontWeight = FontWeight.Bold, maxLines = 1,
-                        modifier = Modifier.border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(dpx(5))).padding(horizontal = dpx(7), vertical = dpx(1)),
-                    )
-                }
-            }
-            Text(card.title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (card.plot.isNotBlank()) Text(card.plot, color = Tok.TextMid, fontSize = spx(16), lineHeight = spx(22), maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-    }
 }
 
 @Composable
