@@ -157,6 +157,10 @@ export class SupabaseBackend implements Backend {
     this.db = createClient(url, key, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'vyzo-web-session' },
     })
+    // Fin de session, quelle qu'en soit la cause (déconnexion, jeton révoqué, autre onglet) : la clé gardée est oubliée.
+    this.db.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') void this.lockVault()
+    })
   }
 
   // ---------------------------------------------------------------- Compte
@@ -171,6 +175,7 @@ export class SupabaseBackend implements Backend {
     const { data, error } = await this.db.auth.signInWithPassword({ email: email.trim(), password })
     if (error) throw error
     const account = { userId: data.user.id, email: data.user.email ?? '' }
+    if (!remember) await forgetKey()
     // Le mot de passe du compte ouvre aussi ses données chiffrées : autant le faire tout de suite.
     await this.unlockVault(account, password, remember).catch(() => false)
     return account
@@ -235,7 +240,9 @@ export class SupabaseBackend implements Backend {
     if (!key) return false
     this.vaultKey = key
     this.vaultUser = account.userId
+    // Case décochée : une clé gardée plus tôt (session expirée, autre compte) ne doit pas survivre à ce choix.
     if (remember) await rememberKey(account.userId, record.keyId, key).catch(() => undefined)
+    else await forgetKey()
     return true
   }
 
