@@ -12,6 +12,17 @@ import {
   type ProgressItem, type Recording, type RecordingGroup, type UserList,
 } from './model'
 
+// ------------------------------------------------------------------ Cadre
+
+/**
+ * Refus d'être affiché dans le cadre d'une autre page : sinon un site piégé pourrait faire cliquer, à travers un
+ * calque, « Supprimer » ou « Mettre à jour ». L'hébergement (GitHub Pages) ne permet pas d'envoyer frame-ancestors.
+ */
+if (window.top !== window.self) {
+  document.body.textContent = 'Ouvre le site du compte Vyzo directement, pas dans une autre page.'
+  throw new Error('Affichage dans un cadre refusé')
+}
+
 // ------------------------------------------------------------------ État
 
 const demoRequested = import.meta.env.DEV && new URLSearchParams(location.search).has('demo')

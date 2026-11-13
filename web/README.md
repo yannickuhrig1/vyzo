@@ -39,11 +39,14 @@ npm test           # règles communes avec l'appli (Vitest)
 npm run build      # site dans dist/, avec une politique de sécurité de contenu stricte
 ```
 
-`dist/` se publie tel quel sur n'importe quel hébergement statique en HTTPS. Pour la connexion par e-mail
-(confirmation, mot de passe oublié), ajouter l'adresse du site dans Supabase › Authentication › URL Configuration.
+En ligne : **https://yannickuhrig1.github.io/vyzo/**, publié par `.github/workflows/site.yml` (tests, build, GitHub
+Pages) à chaque changement de `web/` sur `main`. `dist/` peut aussi se publier tel quel sur tout hébergement statique
+en HTTPS. Pour d'éventuels liens envoyés par e-mail (confirmation, mot de passe oublié), l'adresse du site doit figurer
+dans Supabase › Authentication › URL Configuration.
 
 ## Règles
 
 - Jamais d'`innerHTML` : tout passe par `h()` (`src/dom.ts`). Le site affiche des identifiants d'abonnement.
 - Jamais d'attribut `style` : la CSP le refuse, passer par `el.style` (CSSOM).
 - Aucune ressource externe (polices, scripts, statistiques) : la CSP du build l'interdit de toute façon.
+- Le site refuse de s'afficher dans le cadre d'une autre page (GitHub Pages ne peut pas envoyer `frame-ancestors`).
