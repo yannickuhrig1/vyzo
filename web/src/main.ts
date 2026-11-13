@@ -33,6 +33,8 @@ type DataKey = 'profiles' | 'activity' | 'recordings' | 'devices' | 'playlists' 
 interface State {
   account: Account | null
   vault: VaultStatus | null
+  /** La clé du compte est gardée dans ce navigateur (« Rester déverrouillé »). */
+  remembered: boolean
   profiles: Profile[] | null
   activity: ProfileActivity[] | null
   recordings: Recording[] | null
@@ -47,7 +49,7 @@ interface State {
 }
 
 const emptyState = (): State => ({
-  account: null, vault: null, profiles: null, activity: null, recordings: null, devices: null, latest: null,
+  account: null, vault: null, remembered: false, profiles: null, activity: null, recordings: null, devices: null, latest: null,
   playlists: null, selected: null, progress: null, lists: null, errors: {},
 })
 
@@ -152,6 +154,7 @@ const LOADERS: Record<DataKey, () => Promise<void>> = {
   },
   async playlists() {
     state.vault = await backend.vaultStatus(state.account!)
+    state.remembered = state.vault === 'open' && await backend.vaultRemembered()
     state.playlists = state.vault === 'open' ? await backend.playlists(state.account!) : null
   },
   async progress() {
@@ -244,6 +247,7 @@ function renderLogin(message?: string) {
   const password = h('input', { id: 'password', type: 'password', autocomplete: 'current-password', required: true })
   const error = h('p', { class: 'form-error', role: 'alert' }, message ?? '')
   const submit = h('button', { class: 'btn primary wide', type: 'submit' }, 'Se connecter')
+  const stay = rememberBox('login-remember')
 
   const form = h('form', {
     class: 'login-card',
@@ -253,7 +257,7 @@ function renderLogin(message?: string) {
       submit.disabled = true
       submit.textContent = 'Connexion…'
       try {
-        const account = await backend.signIn(email.value, password.value)
+        const account = await backend.signIn(email.value, password.value, stay.input.checked)
         password.value = ''
         await enter(account)
       } catch (e) {
@@ -269,6 +273,7 @@ function renderLogin(message?: string) {
     h('p', { class: 'lead' }, 'Gère tes appareils, tes abonnements, tes profils et tes listes depuis ton ordinateur.'),
     h('label', { for: 'email' }, 'Adresse e-mail'), email,
     h('label', { for: 'password' }, 'Mot de passe'), password,
+    stay.box,
     error,
     submit,
     h('p', { class: 'fine' },
@@ -435,34 +440,45 @@ function titlesNotice(items: { title: string }[]) {
 
 // ------------------------------------------------------------------ Coffre chiffré
 
+/** Case « Rester déverrouillé sur cet ordinateur », décochée par défaut. */
+function rememberBox(id: string) {
+  const input = h('input', { id, type: 'checkbox' })
+  const box = h('label', { class: 'check compact', for: id }, input, h('span', {},
+    h('strong', {}, 'Rester déverrouillé sur cet ordinateur'),
+    h('small', {}, 'Plus besoin du mot de passe à chaque visite. À éviter sur un ordinateur partagé : tes abonnements et ton historique y resteraient lisibles. « Verrouiller » ou la déconnexion l’oublient.')))
+  return { input, box }
+}
+
 /** Formulaire du mot de passe du compte, qui ouvre la clé des données chiffrées. */
 function unlockForm(onDone: () => void) {
   const password = h('input', { id: 'vault-pass', type: 'password', autocomplete: 'current-password', required: true })
   const error = h('p', { class: 'form-error', role: 'alert' })
   const submit = h('button', { class: 'btn primary', type: 'submit' }, icon('unlock', 16), 'Déverrouiller')
+  const stay = rememberBox('vault-remember')
   const form = h('form', {
     class: 'unlock-form',
     onsubmit: async (ev: Event) => {
       ev.preventDefault()
       error.textContent = ''
       let ok = false
-      await act(submit, async () => { ok = await backend.unlockVault(state.account!, password.value) })
+      await act(submit, async () => { ok = await backend.unlockVault(state.account!, password.value, stay.input.checked) })
       if (!ok) {
         error.textContent = 'Mot de passe incorrect.'
         password.select()
         return
       }
       password.value = ''
-      toast('Données chiffrées déverrouillées')
+      toast(stay.input.checked ? 'Déverrouillé, et gardé sur cet ordinateur' : 'Données chiffrées déverrouillées')
       onDone()
       await refresh(['playlists', ...(state.progress ? ['progress' as const] : []), ...(state.lists ? ['lists' as const] : [])])
     },
   },
     h('label', { for: 'vault-pass' }, 'Mot de passe du compte Vyzo'),
     h('div', { class: 'inline-field' }, password, submit),
+    stay.box,
     error,
     h('p', { class: 'fine' },
-      'Le déchiffrement se fait dans ce navigateur. La clé reste en mémoire et s’oublie à la fermeture de l’onglet.'))
+      'Le déchiffrement se fait dans ce navigateur. Sans la case, la clé reste en mémoire et s’oublie au rechargement de la page.'))
   return { form, focus: () => password.focus() }
 }
 
@@ -770,15 +786,18 @@ function playlistsView() {
   const add = open ? h('button', { class: 'btn primary', type: 'button', onclick: () => editPlaylist(null) },
     icon('plus', 18), 'Ajouter un abonnement') : null
   const lockBtn = open ? h('button', {
-    class: 'btn ghost', type: 'button', title: 'Oublier la clé dans ce navigateur',
-    onclick: () => {
-      backend.lockVault()
+    class: 'btn ghost', type: 'button',
+    title: state.remembered ? 'Verrouiller et oublier la clé gardée sur cet ordinateur' : 'Oublier la clé dans ce navigateur',
+    onclick: async () => {
+      const wasRemembered = state.remembered
+      await backend.lockVault()
       state.vault = 'locked'
+      state.remembered = false
       state.playlists = null
       if (state.progress) state.progress.items = state.progress.items.map((x) => ({ ...x, title: '', subtitle: '' }))
       if (state.lists) state.lists.items = state.lists.items.map((x) => ({ ...x, title: '', subtitle: '' }))
       renderView()
-      toast('Données chiffrées verrouillées')
+      toast(wasRemembered ? 'Verrouillé : la clé n’est plus gardée sur cet ordinateur' : 'Données chiffrées verrouillées')
     },
   }, icon('lock', 16), 'Verrouiller') : null
 

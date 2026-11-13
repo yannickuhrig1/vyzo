@@ -87,6 +87,9 @@ input:not([type="checkbox"]):focus { outline: none; border-color: var(--amber); 
 .check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--amber); flex: none; }
 .check strong { display: block; font-size: 14.5px; font-weight: 600; }
 .check small { display: block; color: var(--dim); font-size: 13px; margin-top: 2px; }
+.check.compact { margin-top: 14px; padding: 10px 12px; }
+.check.compact strong { font-size: 14px; }
+.check.compact small { font-size: 12.5px; }
 
 /* ---------------------------------------------------------------- Connexion */
 

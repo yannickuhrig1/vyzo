@@ -15,7 +15,8 @@ export class DemoBackend implements Backend {
   private account: Account | null = { userId: 'demo', email: 'demo@vyzo.local' }
   private listeners = new Set<(t: Table) => void>()
   private now = Date.now()
-  private unlocked = false
+  /** « Rester déverrouillé » simulé : survit au rechargement de la page. */
+  private unlocked = sessionStorage.getItem('vyzo-demo-remember') === '1'
 
   private profileList: Profile[] = [
     { id: 'p1', name: 'Yannick', colorIndex: 0, isKid: false, pinHash: '', position: 0, updatedAt: 1 },
@@ -108,17 +109,18 @@ export class DemoBackend implements Backend {
     return this.account
   }
 
-  async signIn(email: string, password: string) {
+  async signIn(email: string, password: string, remember = false) {
     await this.wait()
     if (!password) throw new Error('E-mail ou mot de passe incorrect')
     this.account = { userId: 'demo', email: email || 'demo@vyzo.local' }
     this.unlocked = true
+    if (remember) sessionStorage.setItem('vyzo-demo-remember', '1')
     return this.account
   }
 
   async signOut() {
     this.account = null
-    this.unlocked = false
+    await this.lockVault()
   }
 
   watch(_account: Account, onChange: (table: Table) => void) {
@@ -130,14 +132,20 @@ export class DemoBackend implements Backend {
     return this.unlocked ? 'open' : 'locked'
   }
 
-  async unlockVault(_account: Account, password: string) {
+  async unlockVault(_account: Account, password: string, remember = false) {
     await this.wait(500)
     this.unlocked = password === 'demo'
+    if (this.unlocked && remember) sessionStorage.setItem('vyzo-demo-remember', '1')
     return this.unlocked
   }
 
-  lockVault() {
+  async lockVault() {
     this.unlocked = false
+    sessionStorage.removeItem('vyzo-demo-remember')
+  }
+
+  async vaultRemembered() {
+    return sessionStorage.getItem('vyzo-demo-remember') === '1'
   }
 
   async profiles() {

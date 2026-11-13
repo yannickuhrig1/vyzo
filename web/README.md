@@ -14,7 +14,9 @@ canal temps réel privé `user:<uid>`. L'adresse et la clé publique Supabase vi
   du stockage `releases`.
 - **Abonnements** : lignes `sealed_items` de type `playlist`, chiffrées en AES-256-GCM avec la clé du compte
   (`src/vault.ts`, même format que `VaultCrypto`/`SealedSync`). La clé est déballée avec le mot de passe du compte
-  (PBKDF2) et ne reste qu'en mémoire. L'identifiant d'un abonnement est `PlaylistKeys.of` : en changer revient à créer
+  (PBKDF2) et reste en mémoire, sauf si « Rester déverrouillé sur cet ordinateur » est coché : elle est alors gardée
+  dans IndexedDB, chiffrée par une clé AES non extractible propre au navigateur (`src/keystore.ts`), et oubliée par
+  « Verrouiller » ou la déconnexion. L'identifiant d'un abonnement est `PlaylistKeys.of` : en changer revient à créer
   un autre abonnement (l'ancien et ses réglages de chaînes sont retirés).
 - **Historique** : `watch_progress` du profil choisi, avec titres chiffrés dans la colonne `meta` (écrite par l'appli,
   voir `ContentTitles.kt`). Retrait d'un titre : suppression des lignes + message `history_remove` ; tout effacer :

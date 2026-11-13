@@ -8,6 +8,7 @@ import {
   context, metaContext, openText, parseMeta, parsePlaylist, playlistJson, playlistKey, seal, unwrapVault,
   type SealedMeta, type VaultRecord,
 } from './vault'
+import { forgetKey, hasRememberedKey, recallKey, rememberKey } from './keystore'
 
 declare const __SUPABASE_URL__: string
 declare const __SUPABASE_KEY__: string
@@ -31,15 +32,19 @@ export type PlaylistDraft = Omit<Playlist, 'id' | 'updatedAt' | 'hasPrefs'>
 export interface Backend {
   readonly demo: boolean
   currentAccount(): Promise<Account | null>
-  signIn(email: string, password: string): Promise<Account>
+  /** [remember] : garder la clé du compte dans ce navigateur (« Rester déverrouillé »). */
+  signIn(email: string, password: string, remember?: boolean): Promise<Account>
   signOut(): Promise<void>
   /** Prévient quand une table change ailleurs (appli, autre onglet). Renvoie de quoi arrêter l'écoute. */
   watch(account: Account, onChange: (table: Table) => void): () => void
 
   vaultStatus(account: Account): Promise<VaultStatus>
   /** false : mauvais mot de passe. */
-  unlockVault(account: Account, password: string): Promise<boolean>
-  lockVault(): void
+  unlockVault(account: Account, password: string, remember?: boolean): Promise<boolean>
+  /** Verrouille et oublie la clé gardée dans ce navigateur. */
+  lockVault(): Promise<void>
+  /** La clé du compte est gardée dans ce navigateur. */
+  vaultRemembered(): Promise<boolean>
 
   profiles(): Promise<Profile[]>
   saveProfiles(profiles: Profile[]): Promise<void>
@@ -162,17 +167,17 @@ export class SupabaseBackend implements Backend {
     return user ? { userId: user.id, email: user.email ?? '' } : null
   }
 
-  async signIn(email: string, password: string): Promise<Account> {
+  async signIn(email: string, password: string, remember = false): Promise<Account> {
     const { data, error } = await this.db.auth.signInWithPassword({ email: email.trim(), password })
     if (error) throw error
     const account = { userId: data.user.id, email: data.user.email ?? '' }
     // Le mot de passe du compte ouvre aussi ses données chiffrées : autant le faire tout de suite.
-    await this.unlockVault(account, password).catch(() => false)
+    await this.unlockVault(account, password, remember).catch(() => false)
     return account
   }
 
   async signOut(): Promise<void> {
-    this.lockVault()
+    await this.lockVault()
     if (this.channel) await this.db.removeChannel(this.channel)
     this.channel = null
     // « local » : les appareils du compte restent connectés.
@@ -211,23 +216,38 @@ export class SupabaseBackend implements Backend {
 
   async vaultStatus(account: Account): Promise<VaultStatus> {
     if (this.vaultKey && this.vaultUser === account.userId) return 'open'
-    return (await this.vaultRecord()) ? 'locked' : 'missing'
+    const record = await this.vaultRecord()
+    if (!record) return 'missing'
+    // « Rester déverrouillé » : la clé gardée dans ce navigateur, si c'est toujours celle du compte.
+    const kept = await recallKey(account.userId, record.keyId)
+    if (kept && kept.length === 32) {
+      this.vaultKey = kept
+      this.vaultUser = account.userId
+      return 'open'
+    }
+    return 'locked'
   }
 
-  async unlockVault(account: Account, password: string): Promise<boolean> {
+  async unlockVault(account: Account, password: string, remember = false): Promise<boolean> {
     const record = await this.vaultRecord()
     if (!record) return false
     const key = await unwrapVault(record, password, account.userId)
     if (!key) return false
     this.vaultKey = key
     this.vaultUser = account.userId
+    if (remember) await rememberKey(account.userId, record.keyId, key).catch(() => undefined)
     return true
   }
 
-  lockVault(): void {
+  async lockVault(): Promise<void> {
     this.vaultKey?.fill(0)
     this.vaultKey = null
     this.vaultUser = ''
+    await forgetKey()
+  }
+
+  vaultRemembered(): Promise<boolean> {
+    return hasRememberedKey()
   }
 
   private key(account: Account): Uint8Array {
