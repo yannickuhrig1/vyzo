@@ -16,6 +16,7 @@ import fr.yannickuhrig.vyzo.data.sport.SportLineup
 import fr.yannickuhrig.vyzo.data.sport.matchScores
 import fr.yannickuhrig.vyzo.data.trakt.TraktList
 import fr.yannickuhrig.vyzo.data.vod.RecoTitle
+import fr.yannickuhrig.vyzo.data.vod.SeriesTrackingInfo
 import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.ui.sport.toOnAir
 import fr.yannickuhrig.vyzo.data.weather.Weather
@@ -61,6 +62,10 @@ data class VodItem(
     val uhd: Boolean = false,
     /** Avancement de 0 à 1 sur les cartes à reprendre. */
     val progress: Float = 0f,
+    /** Badge court (« 1 nouveau », « +3 à voir » ou date du prochain épisode). */
+    val badge: String = "",
+    /** True lorsque [badge] correspond à une date à venir (teinte bleue au lieu d'ambre). */
+    val badgeUpcoming: Boolean = false,
 ) : HomeItem {
     override val key get() = "${kind.name}:$uid"
 }
@@ -91,8 +96,13 @@ data class HomeRow(val id: String, val title: String, val items: List<HomeItem>)
 
 private fun MovieEntity.toItem(q: VodQualityIndex) =
     VodItem(ContentKind.MOVIE, uid, name, poster, backdrop, rating, year, genre, plot, q.isUhd(uid, name, categoryUid))
-private fun SeriesEntity.toItem(q: VodQualityIndex) =
-    VodItem(ContentKind.SERIES, uid, name, poster, backdrop, rating, year, genre, plot, q.isUhd(uid, name, categoryUid))
+private fun SeriesEntity.toItem(q: VodQualityIndex, t: SeriesTrackingInfo? = null) =
+    VodItem(
+        ContentKind.SERIES, uid, name, poster, backdrop, rating, year, genre, plot,
+        q.isUhd(uid, name, categoryUid),
+        badge = t?.badge.orEmpty(),
+        badgeUpcoming = t?.badgeUpcoming == true,
+    )
 
 /** Écran d'accueil : rangées choisies par l'utilisateur, arrière-plan qui suit la sélection, horloge et météo. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -110,30 +120,38 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     // Partagé entre les rangées : une seule lecture des sections, quel que soit le nombre de rangées.
     private val quality = c.repo.vodQuality().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VodQualityIndex())
+    private val tracking = c.repo.seriesTrackingMap().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private fun movies(key: String): Flow<List<HomeItem>> =
         combine(c.repo.movies(key, MAX_ITEMS), quality) { l, q -> l.take(MAX_ITEMS).map { it.toItem(q) } }
     private fun series(key: String): Flow<List<HomeItem>> =
-        combine(c.repo.series(key, MAX_ITEMS), quality) { l, q -> l.take(MAX_ITEMS).map { it.toItem(q) } }
+        combine(c.repo.series(key, MAX_ITEMS), quality, tracking) { l, q, tr -> l.take(MAX_ITEMS).map { it.toItem(q, tr[it.uid]) } }
+
+    private fun newEpisodes(): Flow<List<HomeItem>> =
+        combine(c.repo.newEpisodesSeries(MAX_ITEMS), quality) { l, q -> l.map { (s, info) -> s.toItem(q, info) } }
 
     /** Tendances de TMDB, limitées à ce que le catalogue visible contient. */
     private fun trendingMovies(): Flow<List<HomeItem>> =
         combine(c.repo.viewScope.mapLatest { c.repo.moviesMatching(c.tmdb.trending(TmdbKind.MOVIE)) }, quality) { l, q -> l.map { it.toItem(q) } }
     private fun trendingSeries(): Flow<List<HomeItem>> =
-        combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.tmdb.trending(TmdbKind.SERIES)) }, quality) { l, q -> l.map { it.toItem(q) } }
+        combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.tmdb.trending(TmdbKind.SERIES)) }, quality, tracking) { l, q, tr ->
+            l.map { it.toItem(q, tr[it.uid]) }
+        }
 
     private fun traktMovies(list: TraktList): Flow<List<HomeItem>> =
         combine(c.repo.viewScope.mapLatest { c.repo.moviesMatching(c.trakt.titles(list)) }, quality) { l, q -> l.map { it.toItem(q) } }
     private fun traktSeries(list: TraktList): Flow<List<HomeItem>> =
-        combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.trakt.titles(list)) }, quality) { l, q -> l.map { it.toItem(q) } }
+        combine(c.repo.viewScope.mapLatest { c.repo.seriesMatching(c.trakt.titles(list)) }, quality, tracking) { l, q, tr ->
+            l.map { it.toItem(q, tr[it.uid]) }
+        }
 
     /** « Pour toi » : calcul local d'après l'historique et les favoris du profil. */
     private fun forYou(): Flow<List<HomeItem>> =
-        combine(c.repo.forYou(MAX_ITEMS), quality) { l, q ->
+        combine(c.repo.forYou(MAX_ITEMS), quality, tracking) { l, q, tr ->
             l.map {
                 when (it) {
                     is RecoTitle.Movie -> it.movie.toItem(q)
-                    is RecoTitle.Series -> it.series.toItem(q)
+                    is RecoTitle.Series -> it.series.toItem(q, tr[it.series.uid])
                 }
             }
         }
@@ -183,6 +201,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         id == HomeRows.ON_AIR -> onAir()
         id == HomeRows.SPORT_LIVE -> sportLive()
         id == HomeRows.CONTINUE_SERIES -> series(Repository.KEY_CONTINUE).withProgress()
+        id == HomeRows.NEW_EPISODES -> newEpisodes()
         id == HomeRows.CONTINUE_MOVIES -> movies(Repository.KEY_CONTINUE).withProgress()
         id == HomeRows.FOR_YOU -> forYou()
         id == HomeRows.FAV_CHANNELS -> channels(Repository.KEY_FAVORITES)

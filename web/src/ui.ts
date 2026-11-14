@@ -1,7 +1,8 @@
 /** Briques d'interface sans état : formats, notifications, boîtes de dialogue, petits composants. */
+import { avatarSvg } from './avatars'
 import { friendlyError } from './backend'
 import { append, h, icon } from './dom'
-import { profileColor, type Profile } from './model'
+import { cleanAvatar, profileColor, type Profile } from './model'
 
 // ------------------------------------------------------------------ Formats
 
@@ -128,9 +129,11 @@ export function emptyCard(iconName: string, title: string, text: string, ...extr
   return h('div', { class: 'empty-card' }, icon(iconName, 26), h('h2', {}, title), h('p', {}, text), extra)
 }
 
-export function avatar(p: Pick<Profile, 'name' | 'colorIndex' | 'isKid'>, size: 'lg' | 'sm' | 'xs' = 'lg') {
+export function avatar(p: Pick<Profile, 'name' | 'colorIndex' | 'isKid' | 'avatar'>, size: 'lg' | 'sm' | 'xs' = 'lg') {
+  const px = size === 'lg' ? 30 : size === 'sm' ? 17 : 11
+  const svg = avatarSvg(cleanAvatar(p.avatar), px)
   const initial = Array.from(p.name.trim())[0]?.toUpperCase() ?? '?'
-  const el = h('span', { class: `avatar ${size}`, 'aria-hidden': 'true' }, initial,
+  const el = h('span', { class: `avatar ${size}`, 'aria-hidden': 'true' }, svg ?? initial,
     p.isKid && size !== 'xs' ? h('span', { class: 'kid-dot' }, icon('child', size === 'lg' ? 12 : 9)) : null)
   el.style.setProperty('--c', profileColor(p.colorIndex))
   return el

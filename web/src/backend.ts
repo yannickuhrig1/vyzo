@@ -1,6 +1,6 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
 import {
-  BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, mergeGuide, nextUpdatedAt,
+  BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, cleanAvatar, mergeGuide, nextUpdatedAt,
   parsePlayback, parseRule, parseUsage, recordingId, ruleJson, withCategoryLock,
   type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
@@ -221,7 +221,7 @@ export interface PasswordResetResult { vault: 'kept' | 'pending' | 'none'; other
 export class UserError extends Error {}
 
 interface ProfileRow {
-  id: string; name: string; color_index: number; is_kid: boolean; pin_hash: string; position: number; updated_at: number
+  id: string; name: string; color_index: number; is_kid: boolean; pin_hash: string; avatar?: string; position: number; updated_at: number
 }
 
 interface RecordingRow {
@@ -250,7 +250,7 @@ interface ProgressRow {
 
 const toProfile = (r: ProfileRow): Profile => ({
   id: r.id, name: r.name || 'Profil', colorIndex: r.color_index ?? 0, isKid: !!r.is_kid, pinHash: r.pin_hash ?? '',
-  position: r.position ?? 0, updatedAt: Number(r.updated_at),
+  avatar: cleanAvatar(r.avatar ?? ''), position: r.position ?? 0, updatedAt: Number(r.updated_at),
 })
 
 const toRecording = (r: RecordingRow): Recording => ({
@@ -538,7 +538,7 @@ export class SupabaseBackend implements Backend {
 
   async profiles(): Promise<Profile[]> {
     const { data, error } = await this.db.from('profiles')
-      .select('id,name,color_index,is_kid,pin_hash,position,updated_at')
+      .select('id,name,color_index,is_kid,pin_hash,avatar,position,updated_at')
       .eq('deleted', false).order('position').limit(PAGE)
     if (error) throw error
     return (data as ProfileRow[]).map(toProfile)
@@ -547,8 +547,8 @@ export class SupabaseBackend implements Backend {
   async saveProfiles(profiles: Profile[]): Promise<void> {
     if (profiles.length === 0) return
     const rows = profiles.map((p) => ({
-      id: p.id, name: p.name, color_index: p.colorIndex, is_kid: p.isKid, pin_hash: p.pinHash, position: p.position,
-      updated_at: nextUpdatedAt(p.updatedAt), deleted: false,
+      id: p.id, name: p.name, color_index: p.colorIndex, is_kid: p.isKid, pin_hash: p.pinHash,
+      avatar: cleanAvatar(p.avatar), position: p.position, updated_at: nextUpdatedAt(p.updatedAt), deleted: false,
     }))
     const { error } = await this.db.from('profiles').upsert(rows, { onConflict: 'user_id,id' })
     if (error) throw error

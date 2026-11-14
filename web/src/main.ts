@@ -2,6 +2,7 @@ import '@fontsource-variable/instrument-sans'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource-variable/jetbrains-mono'
 import './style.css'
+import { AVATAR_CHOICES, avatarSvg } from './avatars'
 import {
   SupabaseBackend, UserError, friendlyError, type PasswordResetResult,
   type Account, type Backend, type BackupData, type CastItem, type ListsData, type LiveMessage, type PlaybackAction, type PlaylistDraft, type Table,
@@ -10,7 +11,7 @@ import {
 import { DemoBackend } from './demo'
 import { append, clear, h, icon } from './dom'
 import {
-  FAVORITES_LIST_ID, PROFILE_PALETTE, MAX_PROFILE_NAME, castItemType, castReadiness, categoryLocked, cleanName, hashParental,
+  FAVORITES_LIST_ID, PROFILE_PALETTE, MAX_PROFILE_NAME, castItemType, castReadiness, categoryLocked, cleanAvatar, cleanName, hashParental,
   hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, progressRatio, recordingGroup, sortProfiles, sortRecordings,
   statusLabel, subscriptionState, updateInProgress, updatePending,
   EMPTY_RULE, MAX_DEVICE_LABEL, MAX_MESSAGE, SENSITIVE_EVENTS, checkRule, deviceName, eventText, livePosition, minutesLabel, recordingId,
@@ -398,15 +399,38 @@ function rememberBox(id: string) {
   return { input, box }
 }
 
+/** Champ mot de passe avec bouton d'affichage / masquage sans état partagé. */
+function passwordWithReveal(inputEl: HTMLInputElement) {
+  const reveal: HTMLButtonElement = h('button', {
+    class: 'icon-btn field-btn', type: 'button', 'aria-label': 'Afficher le mot de passe', 'aria-pressed': 'false',
+    onclick: () => {
+      const shown = inputEl.type === 'text'
+      inputEl.type = shown ? 'password' : 'text'
+      reveal.setAttribute('aria-pressed', String(!shown))
+      reveal.setAttribute('aria-label', shown ? 'Afficher le mot de passe' : 'Masquer le mot de passe')
+      clear(reveal)
+      reveal.appendChild(icon(shown ? 'eye' : 'eyeOff', 15))
+    },
+  }, icon('eye', 15))
+  return h('div', { class: 'with-btn' }, inputEl, reveal)
+}
+
 /** Cadre commun des pages sans compte ouvert (connexion, mot de passe oublié, liens reçus par e-mail). */
-function authPage(pageTitle: string, card: HTMLElement) {
+function authPage(pageTitle: string, card: HTMLElement, aside?: HTMLElement) {
   clear(root)
   document.title = `${pageTitle} · Vyzo`
-  card.classList.add('login-card')
-  card.prepend(h('div', { class: 'login-mark' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Vyzo',
-    backend.demo ? h('span', { class: 'demo-tag' }, 'démo') : null))
-  card.append(h('div', { class: 'login-theme' }, themeSwitch()))
-  append(root, [h('main', { class: 'login' }, card)])
+  card.classList.add('auth-card')
+  const topbar = h('header', { class: 'auth-topbar' },
+    h('div', { class: 'auth-brand' },
+      h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }),
+      'Vyzo',
+      h('span', { class: 'auth-pill' }, 'Espace compte'),
+      backend.demo ? h('span', { class: 'demo-tag' }, 'démo') : null),
+    themeSwitch())
+  const body = aside
+    ? h('div', { class: 'auth-grid' }, aside, card)
+    : h('div', { class: 'auth-single' }, card)
+  append(root, [h('main', { class: 'auth-shell' }, topbar, body)])
 }
 
 /** Bouton qui ressemble à un lien (action secondaire sous un formulaire). */
@@ -442,6 +466,29 @@ function renderLogin(message?: string, prefill = '') {
   const stay = rememberBox('login-remember')
   const resend = h('div', { class: 'auth-extra', hidden: true })
 
+  const sampleChip = (label: string, tone: string, glyph: Node | string) =>
+    h('span', { class: 'auth-chip' },
+      h('span', { class: `auth-chip-dot ${tone}`, 'aria-hidden': 'true' }, glyph),
+      h('span', {}, label))
+
+  const aside = h('section', { class: 'auth-context' },
+    h('div', {},
+      h('p', { class: 'auth-kicker' }, 'Gestion du foyer'),
+      h('h1', {}, 'Tes écrans, tes profils et tes abonnements au même endroit.'),
+      h('p', { class: 'lead' }, 'Gère depuis le navigateur les appareils du salon, les profils du foyer et les enregistrements programmés. Tes listes IPTV restent chiffrées sur tes appareils.')),
+    h('div', { class: 'auth-eco' },
+      h('div', { class: 'auth-eco-head' },
+        h('span', {}, 'Aperçu de l’espace synchronisé'),
+        h('span', { class: 'mono' }, 'AES-256-GCM')),
+      h('div', { class: 'auth-profiles' },
+        sampleChip('Yannick', 'amber', avatarSvg('astronaut', 13) ?? 'Y'),
+        sampleChip('Léa · Enfant', 'cyan', avatarSvg('star', 13) ?? 'L'),
+        sampleChip('Marc', 'violet', 'M')),
+      h('div', { class: 'auth-devices' },
+        h('div', { class: 'auth-device' }, h('div', { class: 'auth-device-name' }, 'TV Salon'), h('div', { class: 'auth-device-meta' }, 'Android TV · à jour')),
+        h('div', { class: 'auth-device' }, h('div', { class: 'auth-device-name' }, 'Téléphone'), h('div', { class: 'auth-device-meta' }, 'Mobile · synchro OK')),
+        h('div', { class: 'auth-device' }, h('div', { class: 'auth-device-name' }, 'PC Bureau'), h('div', { class: 'auth-device-meta' }, 'Enregistreur prêt')))))
+
   const form = h('form', {
     onsubmit: async (ev: Event) => {
       ev.preventDefault()
@@ -462,22 +509,25 @@ function renderLogin(message?: string, prefill = '') {
       }
     },
   },
-    h('h1', {}, 'Connexion'),
-    h('p', { class: 'lead' }, 'Ton compte Vyzo depuis l’ordinateur : appareils, abonnements, profils et listes.'),
+    h('h2', {}, 'Connexion'),
+    h('p', { class: 'lead' }, 'Identifiants du compte créé dans l’application.'),
     h('label', { for: 'email' }, 'Adresse e-mail'), email,
     h('div', { class: 'label-row' },
       h('label', { for: 'password' }, 'Mot de passe'),
       linkButton('Mot de passe oublié ?', () => renderForgot(email.value))),
-    password,
+    passwordWithReveal(password),
     stay.box,
     error,
     resend,
     submit,
-    h('p', { class: 'fine' },
-      'Le compte de tes appareils. Pas encore de compte ? Crée-le dans l’appli : Réglages, Compte Vyzo. Un e-mail te demandera de confirmer l’adresse.'),
-    import.meta.env.DEV && !backend.demo
-      ? h('p', { class: 'fine' }, h('a', { href: '?demo' }, 'Ouvrir la démo (données fictives)'))
-      : null,
+    h('div', { class: 'auth-foot' },
+      h('p', { class: 'fine' },
+        'Pas encore de compte ? Ouvre Vyzo sur ta TV, ton téléphone ou ton PC puis va dans ',
+        h('strong', {}, 'Réglages › Compte Vyzo'),
+        '. Un e-mail te demandera de confirmer l’adresse.'),
+      import.meta.env.DEV && !backend.demo
+        ? h('p', { class: 'fine' }, h('a', { href: '?demo' }, 'Ouvrir la démo (données fictives)'))
+        : null),
   )
 
   function showResend(address: string) {
@@ -492,7 +542,7 @@ function renderLogin(message?: string, prefill = '') {
     resend.hidden = false
   }
 
-  authPage('Connexion', form)
+  authPage('Connexion', form, aside)
   if (prefill) password.focus()
   else email.focus()
 }
@@ -613,9 +663,9 @@ function renderNewPassword(account: Account) {
   },
     h('h1', {}, 'Nouveau mot de passe'),
     h('p', { class: 'lead' }, `Pour le compte ${account.email}.`),
-    h('label', { for: 'new-password' }, 'Nouveau mot de passe'), pass1,
-    h('label', { for: 'new-password-2' }, 'Encore une fois'), pass2,
-    h('label', { for: 'old-password' }, 'Ancien mot de passe (facultatif)'), old,
+    h('label', { for: 'new-password' }, 'Nouveau mot de passe'), passwordWithReveal(pass1),
+    h('label', { for: 'new-password-2' }, 'Encore une fois'), passwordWithReveal(pass2),
+    h('label', { for: 'old-password' }, 'Ancien mot de passe (facultatif)'), passwordWithReveal(old),
     h('p', { class: 'fine' }, 'Tes abonnements et réglages chiffrés sont protégés par l’ancien mot de passe. Si tu t’en souviens, saisis-le : ils passeront au nouveau tout de suite. Sinon, tu pourras le faire plus tard, ou un appareil déjà connecté s’en chargera.'),
     error,
     submit,
@@ -836,7 +886,7 @@ function unlockForm(onDone: () => void) {
   const oldBox = h('div', { class: 'unlock-old', hidden: true },
     h('p', {},
       'C’est bien le mot de passe du compte, mais tes données chiffrées sont encore protégées par l’ancien. Saisis l’ancien mot de passe une seule fois : elles passeront au nouveau, ici et sur tes appareils.'),
-    h('label', { for: 'vault-old' }, 'Ancien mot de passe'), old)
+    h('label', { for: 'vault-old' }, 'Ancien mot de passe'), passwordWithReveal(old))
   const form = h('form', {
     class: 'unlock-form',
     onsubmit: async (ev: Event) => {
@@ -1219,7 +1269,7 @@ function editProfile(existing: Profile | null) {
   const profiles = state.profiles ?? []
   const isNew = !existing
   const draft: Profile = existing ? { ...existing } : {
-    id: crypto.randomUUID(), name: '', colorIndex: nextColor(profiles), isKid: false, pinHash: '',
+    id: crypto.randomUUID(), name: '', colorIndex: nextColor(profiles), isKid: false, pinHash: '', avatar: '',
     position: profiles.reduce((m, p) => Math.max(m, p.position), -1) + 1, updatedAt: 0,
   }
   /** null : on garde le code actuel ; '' : on le retire ; 4 chiffres : nouveau code. */
@@ -1227,12 +1277,29 @@ function editProfile(existing: Profile | null) {
 
   const name = h('input', { id: 'pname', value: draft.name, maxlength: MAX_PROFILE_NAME, required: true, autocomplete: 'off' })
   let previewEl = avatar({ ...draft, name: draft.name || '?' })
+  const initialGlyph = h('span', { class: 'avatar-choice-initial', 'aria-hidden': 'true' },
+    Array.from(draft.name.trim())[0]?.toUpperCase() ?? 'A')
   const refreshPreview = () => {
-    const fresh = avatar({ name: name.value || '?', colorIndex: draft.colorIndex, isKid: kid.checked })
+    initialGlyph.textContent = Array.from(name.value.trim())[0]?.toUpperCase() ?? 'A'
+    const fresh = avatar({ name: name.value || '?', colorIndex: draft.colorIndex, isKid: kid.checked, avatar: draft.avatar })
     previewEl.replaceWith(fresh)
     previewEl = fresh
   }
   name.addEventListener('input', refreshPreview)
+
+  const avatarGrid = h('div', { class: 'avatar-grid', role: 'radiogroup', 'aria-label': 'Avatar' },
+    AVATAR_CHOICES.map((choice) => {
+      const b = h('button', {
+        type: 'button', class: 'avatar-choice', role: 'radio', 'aria-checked': String(choice.id === cleanAvatar(draft.avatar)),
+        onclick: () => {
+          draft.avatar = choice.id
+          for (const item of avatarGrid.querySelectorAll('.avatar-choice')) item.setAttribute('aria-checked', 'false')
+          b.setAttribute('aria-checked', 'true')
+          refreshPreview()
+        },
+      }, choice.id ? avatarSvg(choice.id, 20) : initialGlyph, h('span', {}, choice.label))
+      return b
+    }))
 
   const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Couleur' },
     PROFILE_PALETTE.map((color, i) => {
@@ -1313,6 +1380,7 @@ function editProfile(existing: Profile | null) {
       const final: Profile = {
         ...draft,
         name: cleanName(name.value),
+        avatar: cleanAvatar(draft.avatar),
         isKid: kid.checked,
         pinHash: newPin === null ? draft.pinHash : newPin === '' ? '' : await hashPin(draft.id, newPin),
       }
@@ -1324,6 +1392,7 @@ function editProfile(existing: Profile | null) {
   },
     h('div', { class: 'dialog-head' }, previewEl, h('h2', {}, isNew ? 'Nouveau profil' : 'Modifier le profil')),
     h('label', { for: 'pname' }, 'Nom'), name,
+    h('span', { class: 'field-label' }, 'Avatar'), avatarGrid,
     h('span', { class: 'field-label' }, 'Couleur'), swatches,
     h('label', { class: 'check' }, kid, h('span', {}, h('strong', {}, 'Profil enfant'),
       h('small', {}, 'Les catégories verrouillées par le contrôle parental sont toujours cachées, même avec le code parental.'))),
@@ -1647,17 +1716,6 @@ function editPlaylist(existing: Playlist | null, all: Playlist[] = state.playlis
   const mac = input('pl-mac', draft.mac, { placeholder: '00:1A:79:XX:XX:XX', class: 'mono-input' })
   mac.addEventListener('input', () => { mac.value = mac.value.toUpperCase() })
   const agent = input('pl-agent', draft.userAgent, { placeholder: 'Celui de Vyzo par défaut' })
-  const reveal: HTMLButtonElement = h('button', {
-    class: 'icon-btn field-btn', type: 'button', 'aria-label': 'Afficher le mot de passe', 'aria-pressed': 'false',
-    onclick: () => {
-      const shown = pass.type === 'text'
-      pass.type = shown ? 'password' : 'text'
-      reveal.setAttribute('aria-pressed', String(!shown))
-      reveal.setAttribute('aria-label', shown ? 'Afficher le mot de passe' : 'Masquer le mot de passe')
-      clear(reveal)
-      reveal.appendChild(icon(shown ? 'eye' : 'eyeOff', 15))
-    },
-  }, icon('eye', 15))
 
   const fields = h('div', {})
   const tabs = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Type d’abonnement' })
@@ -1677,7 +1735,7 @@ function editPlaylist(existing: Playlist | null, all: Playlist[] = state.playlis
       append(fields, [
         h('div', { class: 'two' },
           h('div', {}, h('label', { for: 'pl-user' }, 'Identifiant'), user),
-          h('div', {}, h('label', { for: 'pl-pass' }, 'Mot de passe'), h('div', { class: 'with-btn' }, pass, reveal))),
+          h('div', {}, h('label', { for: 'pl-pass' }, 'Mot de passe'), passwordWithReveal(pass))),
       ])
     }
     if (draft.type === 'STALKER') append(fields, [h('label', { for: 'pl-mac' }, 'Adresse MAC'), mac])
@@ -2584,12 +2642,12 @@ function securityView() {
 
   // Affichage
   const current_ = savedTheme()
-  const themes = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Thème' },
+  const themes = h('div', { class: 'segmented theme-grid', role: 'radiogroup', 'aria-label': 'Thème' },
     THEMES.map((t) => h('button', {
-      type: 'button', role: 'radio', 'data-theme-choice': t.id, 'aria-checked': String(t.id === current_),
+      type: 'button', role: 'radio', 'data-theme-choice': t.id, 'aria-checked': String(t.id === current_), title: t.hint,
       onclick: () => setTheme(t.id),
     }, t.label)))
-  const affichage = panel('Affichage', 'Sobre, Cinéma ou Clair. Le choix reste sur cet ordinateur.', [themes])
+  const affichage = panel('Affichage', 'Sobre, Cinéma, Clair, Nuit TV, OLED ou Sable. Le choix reste sur cet ordinateur.', [themes])
 
   // Sauvegarde
   const open = state.vault === 'open'

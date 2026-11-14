@@ -48,7 +48,7 @@ data class TmdbEnrichment(
 enum class TmdbKind(val path: String) { MOVIE("movie"), SERIES("tv") }
 
 /** Résumé et image d'un épisode. */
-data class TmdbEpisode(val season: Int, val number: Int, val title: String, val overview: String, val stillUrl: String?)
+data class TmdbEpisode(val season: Int, val number: Int, val title: String, val overview: String, val stillUrl: String?, val airDate: String = "")
 
 /** Titre d'une liste TMDB (tendances, recommandations), à retrouver dans le catalogue. */
 data class TmdbTitle(val title: String, val originalTitle: String, val year: Int?)
@@ -89,8 +89,37 @@ fun parseSeasonEpisodes(json: JsonObject): List<TmdbEpisode> =
         TmdbEpisode(
             season = e.int("season_number"), number = number, title = e.str("name"), overview = e.str("overview"),
             stillUrl = e.str("still_path").takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w500$it" },
+            airDate = e.str("air_date"),
         )
     }
+
+/** Extrait l'état et les prochaines dates de diffusion d'une série depuis la réponse TMDB `/tv/{id}`. */
+fun parseTmdbSeriesSchedule(
+    seriesUid: String,
+    tmdbId: Int,
+    json: JsonObject,
+    now: Long = System.currentTimeMillis(),
+): fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity {
+    val status = json.str("status")
+    val nextObj = json["next_episode_to_air"].asObj()
+    val today = fr.yannickuhrig.vyzo.ui.common.Fmt.todayIso(now)
+    val futureSeason = json["seasons"].asArr()?.mapNotNull { it.asObj() }.orEmpty()
+        .filter { it.int("season_number") > 0 && it.str("air_date").take(10) >= today }
+        .minByOrNull { it.int("season_number") }
+    return fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity(
+        seriesUid = seriesUid,
+        status = status,
+        nextSeason = nextObj?.int("season_number") ?: 0,
+        nextEpisode = nextObj?.int("episode_number") ?: 0,
+        nextTitle = nextObj?.str("name").orEmpty(),
+        nextAirDate = nextObj?.str("air_date").orEmpty(),
+        upcomingSeason = futureSeason?.int("season_number") ?: 0,
+        upcomingSeasonAirDate = futureSeason?.str("air_date").orEmpty(),
+        upcomingSeasonEpisodes = futureSeason?.int("episode_count") ?: 0,
+        tmdbId = tmdbId,
+        checkedAt = now,
+    )
+}
 
 fun parseTitleList(json: JsonObject): List<TmdbTitle> =
     json["results"].asArr()?.mapNotNull { it.asObj() }.orEmpty().mapNotNull { r ->
@@ -341,8 +370,47 @@ class TmdbService(
 
     private suspend fun fetchSeriesWithKey(apiKey: String, cleanTitle: String, year: Int?, tmdbId: Int?): TmdbEnrichment? {
         val id = tmdbId ?: searchId("tv", "first_air_date_year", apiKey, cleanTitle, year) ?: return null
-        val json = getJson("/tv/$id", "language=fr-FR&append_to_response=credits,videos,external_ids,content_ratings", apiKey) ?: return null
+        val json = getSeriesJson(id, apiKey) ?: return null
         return parseSeriesResponse(json, id, apiKey)
+    }
+
+    /** Retourne le suivi de diffusion d'une série (TMDB avec cache adaptatif 24 h / 30 j, repli TVmaze sans clé). */
+    suspend fun fetchSeriesSchedule(
+        seriesUid: String,
+        rawTitle: String,
+        hintYear: Int? = null,
+        tmdbId: Int? = null,
+        tvMaze: fr.yannickuhrig.vyzo.data.intro.TvMazeClient? = null,
+    ): fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity? = withContext(Dispatchers.IO) {
+        val (cleanTitle, extractedYear) = cleanTitleForTmdb(rawTitle)
+        val year = hintYear ?: extractedYear
+        val apiKey = apiKey()
+        if (apiKey.isNotBlank() && cleanTitle.isNotBlank()) {
+            val id = tmdbId ?: searchId("tv", "first_air_date_year", apiKey, cleanTitle, year)
+            if (id != null) {
+                val json = getSeriesJson(id, apiKey)
+                if (json != null) {
+                    return@withContext parseTmdbSeriesSchedule(seriesUid, id, json)
+                }
+            }
+        }
+        tvMaze?.fetchSchedule(seriesUid, rawTitle, year)
+    }
+
+    private suspend fun getSeriesJson(id: Int, apiKey: String): JsonObject? {
+        val path = "/tv/$id"
+        val query = "language=fr-FR&append_to_response=credits,videos,external_ids,content_ratings"
+        val cacheKey = "tmdb:$path?$query"
+        cache?.get(cacheKey, MetadataCache.DAY_MS)?.let { cached ->
+            runCatching { LenientJson.parseToJsonElement(cached).asObj() }.getOrNull()?.let { return it }
+        }
+        val staleObj = cache?.get(cacheKey, MetadataCache.MAX_AGE_MS)?.let { cached ->
+            runCatching { LenientJson.parseToJsonElement(cached).asObj() }.getOrNull()
+        }
+        if (staleObj != null && fr.yannickuhrig.vyzo.data.vod.SeriesTracking.isEndedStatus(staleObj.str("status"))) {
+            return staleObj
+        }
+        return getJson(path, query, apiKey, maxAgeMs = 1L) ?: staleObj
     }
 
     private suspend fun searchId(kind: String, yearField: String, apiKey: String, query: String, year: Int?): Int? {
@@ -355,10 +423,10 @@ class TmdbService(
     }
 
     /** Résumés et images des épisodes d'une saison, vides sans clé TMDB. */
-    suspend fun seasonEpisodes(tvId: Int, season: Int): List<TmdbEpisode> = withContext(Dispatchers.IO) {
+    suspend fun seasonEpisodes(tvId: Int, season: Int, maxAgeMs: Long = MetadataCache.MAX_AGE_MS): List<TmdbEpisode> = withContext(Dispatchers.IO) {
         val apiKey = apiKey()
         if (apiKey.isBlank()) return@withContext emptyList()
-        getJson("/tv/$tvId/season/$season", "language=fr-FR", apiKey)?.let(::parseSeasonEpisodes).orEmpty()
+        getJson("/tv/$tvId/season/$season", "language=fr-FR", apiKey, maxAgeMs)?.let(::parseSeasonEpisodes).orEmpty()
     }
 
     /** Titres en vogue cette semaine, du plus au moins populaire. */

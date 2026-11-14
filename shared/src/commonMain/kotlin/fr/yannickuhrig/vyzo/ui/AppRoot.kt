@@ -1050,7 +1050,7 @@ private fun NavBar(
         }
         profile?.let { p ->
             Tile(onClick = onProfile, shape = RoundedCornerShape(50), focusScale = 1f, focusedColor = MaterialTheme.colorScheme.primary) {
-                Box(Modifier.padding(5.dp)) { ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid) }
+                Box(Modifier.padding(5.dp)) { ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid, avatar = p.avatar) }
             }
         }
     }
@@ -1200,7 +1200,7 @@ private fun SideRail(
                 focusedColor = MaterialTheme.colorScheme.primary,
             ) { focused ->
                 Row(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid)
+                    ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid, avatar = p.avatar)
                     if (expanded) {
                         Spacer(Modifier.width(14.dp))
                         Column {

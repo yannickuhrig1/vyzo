@@ -24,9 +24,9 @@ export class DemoBackend implements Backend {
   private unlocked = sessionStorage.getItem('vyzo-demo-remember') === '1'
 
   private profileList: Profile[] = [
-    { id: 'p1', name: 'Yannick', colorIndex: 0, isKid: false, pinHash: '', position: 0, updatedAt: 1 },
-    { id: 'p2', name: 'Salon', colorIndex: 1, isKid: false, pinHash: 'x', position: 1, updatedAt: 1 },
-    { id: 'p3', name: 'Enfants', colorIndex: 4, isKid: true, pinHash: '', position: 2, updatedAt: 1 },
+    { id: 'p1', name: 'Yannick', colorIndex: 0, isKid: false, pinHash: '', avatar: 'astronaut', position: 0, updatedAt: 1 },
+    { id: 'p2', name: 'Salon', colorIndex: 1, isKid: false, pinHash: 'x', avatar: '', position: 1, updatedAt: 1 },
+    { id: 'p3', name: 'Enfants', colorIndex: 4, isKid: true, pinHash: '', avatar: 'star', position: 2, updatedAt: 1 },
   ]
 
   private progressList: ProgressItem[] = [

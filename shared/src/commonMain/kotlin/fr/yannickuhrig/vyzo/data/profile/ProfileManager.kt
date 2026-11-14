@@ -60,7 +60,13 @@ class ProfileManager(
         _switched.tryEmit(id)
     }
 
-    suspend fun create(name: String, colorIndex: Int? = null, isKid: Boolean = false, localDeviceId: String = ""): ProfileEntity {
+    suspend fun create(
+        name: String,
+        colorIndex: Int? = null,
+        isKid: Boolean = false,
+        localDeviceId: String = "",
+        avatar: String = "",
+    ): ProfileEntity {
         val all = db.profiles().all()
         val p = ProfileEntity(
             id = UUID.randomUUID().toString(),
@@ -70,6 +76,7 @@ class ProfileManager(
             position = db.profiles().maxPosition() + 1,
             dirty = localDeviceId.isBlank(),
             localDeviceId = localDeviceId,
+            avatar = cleanAvatar(avatar),
         )
         db.profiles().upsert(p)
         _changed.tryEmit(Unit)
@@ -85,6 +92,8 @@ class ProfileManager(
     suspend fun rename(id: String, name: String) = update(id) { it.copy(name = cleanName(name)) }
 
     suspend fun setColor(id: String, colorIndex: Int) = update(id) { it.copy(colorIndex = colorIndex) }
+
+    suspend fun setAvatar(id: String, avatar: String) = update(id) { it.copy(avatar = cleanAvatar(avatar)) }
 
     suspend fun setKid(id: String, kid: Boolean) = update(id) { it.copy(isKid = kid) }
 
@@ -153,10 +162,16 @@ class ProfileManager(
         db.profiles().all().firstOrNull() ?: create(DEFAULT_PROFILE_NAME, colorIndex = 0)
 
     companion object {
-        const val PALETTE_SIZE = 8
+        const val PALETTE_SIZE = 12
         private const val MAX_NAME = 24
+        private const val MAX_AVATAR = 40
 
         fun cleanName(name: String): String = name.trim().replace(Regex("\\s+"), " ").take(MAX_NAME).ifBlank { "Profil" }
+
+        fun cleanAvatar(avatar: String): String {
+            val clean = avatar.trim().lowercase().take(MAX_AVATAR)
+            return if (clean == "initial") "" else clean
+        }
 
         fun hashPin(profileId: String, pin: String): String = sha256("vyzo-pin:$profileId:$pin")
 

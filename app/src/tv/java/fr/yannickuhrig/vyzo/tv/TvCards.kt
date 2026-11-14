@@ -271,17 +271,30 @@ fun PosterTile(item: VodItem, modifier: Modifier, onFocus: () -> Unit, onClick: 
         if (item.uhd) CardBadge("4K", Color.White, Modifier.align(Alignment.TopStart).padding(dpx(8)))
         // Certains catalogues donnent des notes hors échelle.
         if (item.rating > 0f && item.rating <= 10f) CardBadge("★ %.1f".format(item.rating), Accent1, Modifier.align(Alignment.TopEnd).padding(dpx(8)))
+        if (!caption && item.badge.isNotBlank()) {
+            val bg = if (item.badgeUpcoming) Color(0xEB2563EB) else Accent1
+            val fg = if (item.badgeUpcoming) Color.White else Color.Black
+            CardBadge(item.badge, fg, Modifier.align(Alignment.BottomStart).padding(dpx(8)), background = bg, bordered = false)
+        }
         if (caption) PosterCaption(item, Modifier.align(Alignment.BottomStart))
     }
 }
 
 /** Petite étiquette posée sur une affiche. */
 @Composable
-private fun CardBadge(text: String, color: Color, modifier: Modifier = Modifier) {
+private fun CardBadge(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    background: Color = Color(0x99000000),
+    bordered: Boolean = true,
+) {
     Text(
         text, color = color, fontSize = spx(13), lineHeight = spx(16), fontWeight = FontWeight.Bold, maxLines = 1,
-        modifier = modifier.background(Color(0x99000000), RoundedCornerShape(dpx(6)))
-            .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(dpx(6))).padding(horizontal = dpx(7), vertical = dpx(2)),
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.background(background, RoundedCornerShape(dpx(6)))
+            .then(if (bordered) Modifier.border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(dpx(6))) else Modifier)
+            .padding(horizontal = dpx(7), vertical = dpx(2)),
     )
 }
 
@@ -293,6 +306,15 @@ private fun PosterCaption(item: VodItem, modifier: Modifier) {
             .background(Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color(0xD9000000), 1f to Color(0xF5070709)))
             .padding(start = dpx(10), end = dpx(10), top = dpx(34), bottom = dpx(10)),
     ) {
+        if (item.badge.isNotBlank()) {
+            CardBadge(
+                item.badge,
+                color = if (item.badgeUpcoming) Color.White else Color.Black,
+                modifier = Modifier.padding(bottom = dpx(4)),
+                background = if (item.badgeUpcoming) Color(0xEB2563EB) else Accent1,
+                bordered = false,
+            )
+        }
         Text(item.title, color = Color.White, fontSize = spx(15), lineHeight = spx(19), fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
         val meta = listOf(item.year, firstGenre(item.genre)).filter { it.isNotBlank() }.joinToString(" · ")
         if (meta.isNotBlank()) Text(meta, color = Tok.TextMid, fontSize = spx(13), lineHeight = spx(17), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -322,6 +344,15 @@ fun LandscapeCard(item: VodItem, modifier: Modifier, onFocus: () -> Unit, onClic
             }
         }
         if (item.uhd) CardBadge("4K", Color.White, Modifier.align(Alignment.TopStart).padding(dpx(8)))
+        if (item.badge.isNotBlank()) {
+            CardBadge(
+                item.badge,
+                color = if (item.badgeUpcoming) Color.White else Color.Black,
+                modifier = Modifier.align(Alignment.TopEnd).padding(dpx(8)),
+                background = if (item.badgeUpcoming) Color(0xEB2563EB) else Accent1,
+                bordered = false,
+            )
+        }
         if (item.progress > 0f) ProgressBar(item.progress, Accent1, Modifier.align(Alignment.BottomStart), h = 4)
     }
 }

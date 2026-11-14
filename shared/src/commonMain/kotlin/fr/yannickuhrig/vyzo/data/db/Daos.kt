@@ -542,7 +542,35 @@ interface SeriesDao {
 
     @Query("SELECT * FROM episode WHERE uid = :uid")
     suspend fun episode(uid: String): EpisodeEntity?
+
+    /** Épisodes des séries suivies par [profileId] (favoris ou commencées), avec leur progression éventuelle. */
+    @Query(
+        """SELECT e.seriesUid AS seriesUid, e.uid AS episodeUid, e.season AS season, e.episode AS episode,
+           e.title AS episodeTitle, COALESCE(w.positionMs, 0) AS positionMs,
+           COALESCE(w.durationMs, 0) AS durationMs, COALESCE(w.updatedAt, 0) AS progressUpdatedAt
+           FROM episode e
+           JOIN series s ON s.uid = e.seriesUid
+           LEFT JOIN watch_progress w ON w.profileId = :profileId AND w.uid = e.uid
+           WHERE s.playlistId IN (:pids) AND (:hide = 0 OR s.categoryUid NOT IN """ + LOCKED_CATEGORIES + """)
+           AND (
+               s.uid IN (SELECT w2.parentUid FROM watch_progress w2 WHERE w2.profileId = :profileId AND w2.kind = 'SERIES' AND w2.parentUid != '')
+               OR s.uid IN (SELECT g.itemUid FROM user_group_item g WHERE g.profileId = :profileId AND g.groupId = :favorites AND g.kind = 'SERIES')
+           )
+           ORDER BY e.seriesUid, e.season, e.episode""",
+    )
+    fun followedEpisodes(pids: List<Long>, profileId: String, favorites: Long, hide: Boolean): Flow<List<FollowedEpisodeRow>>
 }
+
+data class FollowedEpisodeRow(
+    val seriesUid: String,
+    val episodeUid: String,
+    val season: Int,
+    val episode: Int,
+    val episodeTitle: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val progressUpdatedAt: Long,
+)
 
 @Dao
 interface ProgramDao {
@@ -1266,6 +1294,45 @@ interface MetadataCacheDao {
 
     @Query("DELETE FROM metadata_cache WHERE fetchedAt < :before")
     suspend fun deleteOlderThan(before: Long)
+}
+
+@Dao
+interface SeriesTrackingDao {
+    @Query("SELECT * FROM series_episode_alert")
+    fun observeAlerts(): Flow<List<SeriesEpisodeAlertEntity>>
+
+    @Query("SELECT * FROM series_episode_alert WHERE seriesUid = :seriesUid")
+    fun observeAlert(seriesUid: String): Flow<SeriesEpisodeAlertEntity?>
+
+    @Query("SELECT * FROM series_episode_alert WHERE seriesUid = :seriesUid")
+    suspend fun alert(seriesUid: String): SeriesEpisodeAlertEntity?
+
+    @Upsert
+    suspend fun upsertAlert(item: SeriesEpisodeAlertEntity)
+
+    @Query("DELETE FROM series_episode_alert WHERE seriesUid = :seriesUid")
+    suspend fun deleteAlert(seriesUid: String)
+
+    @Query("DELETE FROM series_episode_alert WHERE detectedAt < :before")
+    suspend fun deleteExpiredAlerts(before: Long)
+
+    @Query("DELETE FROM series_episode_alert WHERE substr(seriesUid, 1, length(:pidPrefix)) = :pidPrefix")
+    suspend fun deleteAlertsForPlaylist(pidPrefix: String)
+
+    @Query("SELECT * FROM series_schedule")
+    fun observeSchedules(): Flow<List<SeriesScheduleEntity>>
+
+    @Query("SELECT * FROM series_schedule WHERE seriesUid = :seriesUid")
+    suspend fun schedule(seriesUid: String): SeriesScheduleEntity?
+
+    @Query("SELECT * FROM series_schedule WHERE seriesUid = :seriesUid")
+    fun observeSchedule(seriesUid: String): Flow<SeriesScheduleEntity?>
+
+    @Upsert
+    suspend fun upsertSchedule(item: SeriesScheduleEntity)
+
+    @Query("DELETE FROM series_schedule WHERE substr(seriesUid, 1, length(:pidPrefix)) = :pidPrefix")
+    suspend fun deleteSchedulesForPlaylist(pidPrefix: String)
 }
 
 @Dao

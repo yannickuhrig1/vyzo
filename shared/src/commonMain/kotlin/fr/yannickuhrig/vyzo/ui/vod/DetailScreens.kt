@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,16 +77,19 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.yannickuhrig.vyzo.AppContainer
+import fr.yannickuhrig.vyzo.data.vod.SeriesTracking
 import fr.yannickuhrig.vyzo.data.vod.resolutionShort
 import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.db.DownloadEntity
 import fr.yannickuhrig.vyzo.data.db.EpisodeEntity
 import fr.yannickuhrig.vyzo.data.db.MovieEntity
 import fr.yannickuhrig.vyzo.data.db.SeriesEntity
+import fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity
 import fr.yannickuhrig.vyzo.data.db.WatchProgressEntity
 import fr.yannickuhrig.vyzo.data.remote.CastCommand
 import fr.yannickuhrig.vyzo.data.ratings.OmdbRatings
 import fr.yannickuhrig.vyzo.data.tmdb.CastMember
+import fr.yannickuhrig.vyzo.data.tmdb.MetadataCache
 import fr.yannickuhrig.vyzo.data.tmdb.TmdbEpisode
 import fr.yannickuhrig.vyzo.data.tmdb.TmdbKind
 import fr.yannickuhrig.vyzo.data.tmdb.certificationLabel
@@ -350,6 +355,13 @@ class SeriesDetailViewModel(private val c: AppContainer, val uid: String) : View
     val similar = MutableStateFlow<List<SeriesEntity>>(emptyList())
     /** Résumés et images de TMDB par (saison, épisode), pour compléter ce que le fournisseur ne donne pas. */
     val episodeMeta = MutableStateFlow<Map<Pair<Int, Int>, TmdbEpisode>>(emptyMap())
+    /** Épisodes annoncés sur TMDB non encore présents dans la playlist. */
+    val upcomingBySeason = MutableStateFlow<Map<Int, List<TmdbEpisode>>>(emptyMap())
+    val schedule: StateFlow<SeriesScheduleEntity?> = c.db.seriesTracking().observeSchedule(uid)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val freshSlots: StateFlow<Set<Pair<Int, Int>>> = c.db.seriesTracking().observeAlert(uid)
+        .map { SeriesTracking.parseFreshSlots(it?.freshSlots.orEmpty()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
     private val seasonsAsked = HashSet<Int>()
     /** Définition de chaque épisode déjà relevée (« 4K », « 1080p »…). */
     val qualities: StateFlow<Map<String, String>> = c.db.streamQuality().observeAll()
@@ -366,6 +378,12 @@ class SeriesDetailViewModel(private val c: AppContainer, val uid: String) : View
             loading.value = false
             val e = c.tmdb.enrichSeries(s.name, s.yearInt.takeIf { it > 0 })
             enrichment.value = e
+            launch {
+                runCatching {
+                    val tmdbId = e.tmdbId ?: c.repo.seriesTmdbId(s)
+                    SeriesTracking.refreshScheduleIfDue(c.db, c.tmdb, c.tvMaze, s, tmdbId = tmdbId)
+                }
+            }
             e.imdbId?.let { ratings.value = c.omdb.ratings(it) }
             e.tmdbId?.let { id -> similar.value = c.repo.seriesMatching(c.tmdb.recommendations(TmdbKind.SERIES, id)).filter { it.uid != uid } }
         }
@@ -384,9 +402,25 @@ class SeriesDetailViewModel(private val c: AppContainer, val uid: String) : View
         if (!seasonsAsked.add(n)) return
         viewModelScope.launch {
             val id = enrichment.filterNotNull().first().tmdbId ?: return@launch
-            val found = c.tmdb.seasonEpisodes(id, n)
+            val latestSeason = episodes.value?.maxOfOrNull { it.season }
+            val maxAge = if (n == latestSeason || SeriesTracking.isActiveStatus(schedule.value?.status.orEmpty())) {
+                MetadataCache.DAY_MS
+            } else {
+                MetadataCache.MAX_AGE_MS
+            }
+            val found = c.tmdb.seasonEpisodes(id, n, maxAge)
             episodeMeta.value = episodeMeta.value + found.associateBy { n to it.number }
+            val future = found.filter { Fmt.isFutureOrTodayIso(it.airDate) }
+            if (future.isNotEmpty()) {
+                upcomingBySeason.value = upcomingBySeason.value + (n to future)
+            }
         }
+    }
+
+    fun upcomingForSeason(season: Int?, shown: List<EpisodeEntity>, map: Map<Int, List<TmdbEpisode>>): List<TmdbEpisode> {
+        val s = season ?: return emptyList()
+        val existing = shown.mapTo(HashSet()) { it.episode }
+        return map[s].orEmpty().filter { it.number !in existing && Fmt.isFutureOrTodayIso(it.airDate) }
     }
 
     fun downloadEpisode(ep: EpisodeEntity) {
@@ -478,12 +512,16 @@ fun SeriesDetailScreen(
     val ratings by vm.ratings.collectAsState()
     val similar by vm.similar.collectAsState()
     val downloads by vm.downloads.collectAsState()
+    val schedule by vm.schedule.collectAsState()
+    val freshSlots by vm.freshSlots.collectAsState()
+    val upcomingBySeason by vm.upcomingBySeason.collectAsState()
     val s = series ?: return Loading()
     val eps = episodes.orEmpty()
     val seasons = eps.map { it.season }.distinct().sorted()
     val season = seasonSel ?: seasons.firstOrNull()
     val shown = eps.filter { it.season == season }
     val episodeMeta by vm.episodeMeta.collectAsState()
+    val upcoming = vm.upcomingForSeason(season, shown, upcomingBySeason)
     LaunchedEffect(season) { season?.let(vm::loadSeasonMeta) }
     val resume = vm.resumeTarget(eps, progress)
     val tv = isTv()
@@ -551,6 +589,7 @@ fun SeriesDetailScreen(
                 }
                 DetailButton(if (fav) "Favori" else "Ajouter aux favoris", if (fav) Icons.Default.Star else Icons.Default.StarBorder) { vm.toggleFavorite() }
             }
+            SeriesTrackingBanners(freshSlots.size, schedule, Modifier.padding(top = 12.dp))
             if (!enrichment?.tagline.isNullOrBlank()) {
                 Text(
                     "« ${enrichment!!.tagline} »",
@@ -592,6 +631,24 @@ fun SeriesDetailScreen(
         }
     }
 
+    fun LazyListScope.seasonEpisodeItems() {
+        items(shown, key = { it.uid }) { ep ->
+            EpisodeRow(
+                ep = ep,
+                progress = progress[ep.uid],
+                download = downloads[ep.uid],
+                tmdb = episodeMeta[ep.season to ep.episode],
+                isFresh = (ep.season to ep.episode) in freshSlots,
+                onDownload = { vm.downloadEpisode(ep) },
+                onToggleWatched = { vm.toggleWatched(ep) },
+                onClick = { onPlayEpisode(ep, progress[ep.uid]?.resumeMs() ?: 0) },
+            )
+        }
+        items(upcoming, key = { "upcoming-${it.season}-${it.number}" }) { ep ->
+            UpcomingEpisodeRow(ep)
+        }
+    }
+
     DetailScaffold(backdrop = s.backdrop.ifBlank { s.poster }, scrollable = false) {
         if (tv) {
             Row(Modifier.fillMaxSize()) {
@@ -601,17 +658,7 @@ fun SeriesDetailScreen(
                     seasonChips()
                     episodeState()
                     LazyColumn(state = episodeListState, contentPadding = PaddingValues(bottom = 32.dp)) {
-                        items(shown, key = { it.uid }) { ep ->
-                            EpisodeRow(
-                                ep = ep,
-                                progress = progress[ep.uid],
-                                download = downloads[ep.uid],
-                                tmdb = episodeMeta[ep.season to ep.episode],
-                                onDownload = { vm.downloadEpisode(ep) },
-                                onToggleWatched = { vm.toggleWatched(ep) },
-                                onClick = { onPlayEpisode(ep, progress[ep.uid]?.resumeMs() ?: 0) },
-                            )
-                        }
+                        seasonEpisodeItems()
                     }
                 }
             }
@@ -620,17 +667,7 @@ fun SeriesDetailScreen(
                 item { info() }
                 item { seasonChips() }
                 item { episodeState() }
-                items(shown, key = { it.uid }) { ep ->
-                    EpisodeRow(
-                        ep = ep,
-                        progress = progress[ep.uid],
-                        download = downloads[ep.uid],
-                        tmdb = episodeMeta[ep.season to ep.episode],
-                        onDownload = { vm.downloadEpisode(ep) },
-                        onToggleWatched = { vm.toggleWatched(ep) },
-                        onClick = { onPlayEpisode(ep, progress[ep.uid]?.resumeMs() ?: 0) },
-                    )
-                }
+                seasonEpisodeItems()
             }
         }
     }
@@ -722,12 +759,51 @@ private fun WatchProgressEntity.resumeMs(): Long = if (positionMs < durationMs *
 /** Vu jusqu'au bout (95 % au moins). */
 fun WatchProgressEntity?.finished(): Boolean = this != null && durationMs > 0 && positionMs >= durationMs * 0.95
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SeriesTrackingBanners(freshCount: Int, schedule: SeriesScheduleEntity?, modifier: Modifier = Modifier) {
+    val schedDisplay = schedule?.let { SeriesTracking.formatScheduleDisplay(it) }
+    val freshLabel = SeriesTracking.alertBannerLabel(freshCount)
+    if (freshLabel.isBlank() && schedDisplay == null) return
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (freshLabel.isNotBlank()) {
+            Text(
+                freshLabel,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black,
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(VyzoColors.Amber).padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+        if (schedDisplay != null) {
+            val bg = if (schedDisplay.hasUpcomingDate) Color(0xCC1E3A8A) else Color.White.copy(alpha = 0.09f)
+            val fg = when {
+                schedDisplay.hasUpcomingDate -> Color(0xFFBFDBFE)
+                schedDisplay.isEnded -> VyzoColors.TextDim
+                else -> VyzoColors.Cyan
+            }
+            Text(
+                schedDisplay.banner,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = fg,
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(bg).padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun EpisodeRow(
     ep: EpisodeEntity,
     progress: WatchProgressEntity?,
     download: DownloadEntity? = null,
     tmdb: TmdbEpisode? = null,
+    isFresh: Boolean = false,
     onDownload: (() -> Unit)? = null,
     onToggleWatched: (() -> Unit)? = null,
     onClick: () -> Unit,
@@ -747,11 +823,24 @@ private fun EpisodeRow(
             }
             Column(Modifier.weight(1f)) {
                 val generic = Regex("^(é|e|É|E)pisode\\s*\\d+$", RegexOption.IGNORE_CASE).matches(ep.title.trim())
-                Text(
-                    if (generic || ep.title.isBlank()) "Épisode ${ep.episode}" else "É${ep.episode} · ${ep.title}",
-                    style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                val meta = Fmt.minutes(ep.durationSecs)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (generic || ep.title.isBlank()) "Épisode ${ep.episode}" else "É${ep.episode} · ${ep.title}",
+                        style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (isFresh) {
+                        Text(
+                            "NOUVEAU",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black,
+                            modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(VyzoColors.Amber).padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+                val airDateLabel = tmdb?.airDate?.takeIf { it.isNotBlank() }?.let { Fmt.isoDate(it) }
+                val meta = listOfNotNull(airDateLabel, Fmt.minutes(ep.durationSecs).ifBlank { null }).joinToString(" · ")
                 if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim)
                 if (plot.isNotBlank()) Text(plot, style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (progress != null && progress.durationMs > 0) {
@@ -811,6 +900,45 @@ private fun EpisodeRow(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpcomingEpisodeRow(ep: TmdbEpisode) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.025f)).graphicsLayer { alpha = 0.62f }.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!ep.stillUrl.isNullOrBlank()) {
+            NetImage(ep.stillUrl, Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+        } else {
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(22.dp)).background(VyzoColors.SurfaceHigh), contentAlignment = Alignment.Center) {
+                Text("${ep.number}", style = MaterialTheme.typography.titleSmall, color = VyzoColors.TextDim)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (ep.title.isBlank()) "Épisode ${ep.number}" else "É${ep.number} · ${ep.title}",
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Text(
+                    "À venir · ${Fmt.isoDate(ep.airDate)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFBFDBFE),
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xCC1E3A8A)).padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            if (ep.overview.isNotBlank()) {
+                Text(ep.overview, style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }

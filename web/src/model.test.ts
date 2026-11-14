@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  cleanName, hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, nextUpdatedAt, profileColor, progressRatio,
+  cleanAvatar, cleanName, hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, nextUpdatedAt,
+  PROFILE_PALETTE, profileColor, progressRatio,
   recordingGroup, statusLabel, updateInProgress, updatePending,
   CAST_MIN_VERSION, castItemType, castReadiness, categoryLocked, hashParental, subscriptionState, withCategoryLock,
   type CatalogEntry, type Device, type PlaylistStatus, type Profile, type Recording, type SealedPrefs, EMPTY_RULE, checkRule, deviceName, eventText, livePosition, mergeGuide, parsePlayback, parseRule, parseUsage, recordingId, ruleJson, ruleSummary, summarizeUsage, type GuideResult, type UsageDay,
 } from './model'
 
-const profile = (id: string, position: number, colorIndex = 0): Profile =>
-  ({ id, name: id, colorIndex, isKid: false, pinHash: '', position, updatedAt: 10 })
+const profile = (id: string, position: number, colorIndex = 0, avatar = ''): Profile =>
+  ({ id, name: id, colorIndex, isKid: false, pinHash: '', avatar, position, updatedAt: 10 })
 
 const rec = (status: Recording['status'], start: number, stop: number): Recording =>
   ({ id: 'r', channelKey: 'k', channelName: 'TF1', title: 't', startMs: start, stopMs: stop, status, error: '', sender: '', updatedAt: 1 })
@@ -31,11 +32,17 @@ describe('profils', () => {
     expect(cleanName('a'.repeat(40))).toHaveLength(24)
   })
 
+  it('nettoie l’avatar comme ProfileManager.cleanAvatar', () => {
+    expect(cleanAvatar('  Rocket ')).toBe('rocket')
+    expect(cleanAvatar('initial')).toBe('')
+    expect(cleanAvatar('   ')).toBe('')
+  })
+
   it('prend la première couleur libre, puis recommence le tour', () => {
     expect(nextColor([profile('a', 0, 0), profile('b', 1, 2)])).toBe(1)
-    const full = Array.from({ length: 8 }, (_, i) => profile(String(i), i, i))
+    const full = Array.from({ length: PROFILE_PALETTE.length }, (_, i) => profile(String(i), i, i))
     expect(nextColor(full)).toBe(0)
-    expect(profileColor(-1)).toBe(profileColor(7))
+    expect(profileColor(-1)).toBe(profileColor(PROFILE_PALETTE.length - 1))
   })
 
   it('déplace un profil en renvoyant seulement ceux qui changent de place', () => {

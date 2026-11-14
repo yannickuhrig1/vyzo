@@ -520,6 +520,55 @@ class Repository(
         return runCatching { sync.xtreamSeriesTmdbId(p, s) }.getOrNull()
     }
 
+    /** Suivi des épisodes à voir et prochaines diffusions, indexé par uid de série. */
+    fun seriesTrackingMap(): Flow<Map<String, fr.yannickuhrig.vyzo.data.vod.SeriesTrackingInfo>> =
+        combine(
+            viewScope.flatMapLatest { sc ->
+                if (sc.pids.isEmpty() || sc.profileId.isBlank()) flowOf(emptyList())
+                else db.series().followedEpisodes(sc.pids, sc.profileId, FAVORITES_GROUP_ID, sc.hide)
+            },
+            db.seriesTracking().observeAlerts(),
+            db.seriesTracking().observeSchedules(),
+        ) { rows, alerts, schedules ->
+            val rowsBySeries = rows.groupBy { it.seriesUid }
+            val alertsBySeries = alerts.associateBy { it.seriesUid }
+            val schedulesBySeries = schedules.associateBy { it.seriesUid }
+            val keys = LinkedHashSet<String>()
+            keys += rowsBySeries.keys
+            keys += schedulesBySeries.keys
+            val out = HashMap<String, fr.yannickuhrig.vyzo.data.vod.SeriesTrackingInfo>(keys.size)
+            for (uid in keys) {
+                val epRows = rowsBySeries[uid].orEmpty()
+                val info = fr.yannickuhrig.vyzo.data.vod.SeriesTracking.summarize(
+                    rows = epRows,
+                    alert = if (uid in rowsBySeries) alertsBySeries[uid] else null,
+                    schedule = schedulesBySeries[uid],
+                )
+                if (info.newCount > 0 || info.badge.isNotBlank() || info.scheduleBanner.isNotBlank() || info.freshSlots.isNotEmpty()) {
+                    out[uid] = info
+                }
+            }
+            out
+        }
+
+    /** Séries suivies ayant au moins un nouvel épisode non vu à regarder. */
+    fun newEpisodesSeries(limit: Int = 20): Flow<List<Pair<SeriesEntity, fr.yannickuhrig.vyzo.data.vod.SeriesTrackingInfo>>> =
+        seriesTrackingMap()
+            .map { map ->
+                map.entries
+                    .filter { it.value.newCount > 0 }
+                    .sortedWith(
+                        compareByDescending<Map.Entry<String, fr.yannickuhrig.vyzo.data.vod.SeriesTrackingInfo>> { it.value.alertDetectedAt }
+                            .thenByDescending { it.value.lastWatchUpdatedAt }
+                            .thenByDescending { it.value.newCount },
+                    )
+                    .take(limit)
+            }.mapLatest { candidates ->
+                if (candidates.isEmpty()) return@mapLatest emptyList()
+                val byUid = candidates.map { it.key }.chunked(400).flatMap { db.series().byUids(it) }.associateBy { it.uid }
+                candidates.mapNotNull { (uid, info) -> byUid[uid]?.let { it to info } }
+            }
+
     // ------------------------------------------------------------ Progression
 
     /** Avancement de tout ce que le profil a commencé, pour les cartes « Reprendre ». */
@@ -566,6 +615,11 @@ class Repository(
                 dirty = true,
             ),
         )
+        if (kind == ContentKind.SERIES && parentUid.isNotBlank() && fr.yannickuhrig.vyzo.data.vod.SeriesTracking.isEpisodeFinished(positionMs, durationMs)) {
+            db.series().episode(uid)?.let { ep ->
+                fr.yannickuhrig.vyzo.data.vod.SeriesTracking.markSlotWatched(db, parentUid, ep.season, ep.episode)
+            }
+        }
         changed()
     }
 

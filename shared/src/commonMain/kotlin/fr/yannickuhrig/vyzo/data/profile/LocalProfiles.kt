@@ -45,6 +45,7 @@ data class LocalProfileBackup(
     val colorIndex: Int = 0,
     val isKid: Boolean = false,
     val pinHash: String = "",
+    val avatar: String = "",
     val groups: List<LocalBackupGroup> = emptyList(),
     val items: List<LocalBackupItem> = emptyList(),
     val progress: List<LocalBackupProgress> = emptyList(),
@@ -75,8 +76,8 @@ class LocalProfiles(
         }
     }
 
-    suspend fun create(name: String, isKid: Boolean = false): ProfileEntity =
-        profiles.create(name, isKid = isKid, localDeviceId = deviceId())
+    suspend fun create(name: String, isKid: Boolean = false, avatar: String = ""): ProfileEntity =
+        profiles.create(name, isKid = isKid, localDeviceId = deviceId(), avatar = avatar)
 
     /** Enregistre l'état actuel du profil, à la place de sa sauvegarde précédente. */
     suspend fun backup(id: String): LocalProfileBackup {
@@ -86,7 +87,7 @@ class LocalProfiles(
         val backup = LocalProfileBackup(
             deviceId = deviceId(),
             createdAt = System.currentTimeMillis(),
-            id = p.id, name = p.name, colorIndex = p.colorIndex, isKid = p.isKid, pinHash = p.pinHash,
+            id = p.id, name = p.name, colorIndex = p.colorIndex, isKid = p.isKid, pinHash = p.pinHash, avatar = p.avatar,
             groups = db.groups().allGroups().filter { it.profileId == id }.map { LocalBackupGroup(it.id, it.name, it.position, it.syncId) },
             items = db.groups().allItems().filter { it.profileId == id }.map { LocalBackupItem(it.groupId, it.contentKey, it.kind.name, it.position, it.addedAt, it.updatedAt) },
             progress = db.progress().forProfile(id).map { LocalBackupProgress(it.contentKey, it.kind.name, it.parentKey, it.positionMs, it.durationMs, it.updatedAt) },
@@ -134,7 +135,7 @@ class LocalProfiles(
             db.profiles().upsert(
                 ProfileEntity(
                     b.id, b.name, b.colorIndex, b.isKid, b.pinHash, position = current?.position ?: (db.profiles().maxPosition() + 1),
-                    dirty = false, localDeviceId = me,
+                    dirty = false, localDeviceId = me, avatar = ProfileManager.cleanAvatar(b.avatar),
                 ),
             )
             val groupIds = b.groups.associate { g ->

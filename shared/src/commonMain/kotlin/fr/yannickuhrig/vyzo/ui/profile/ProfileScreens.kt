@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,8 +23,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Add
@@ -95,24 +98,37 @@ import kotlinx.coroutines.launch
 val ProfilePalette = listOf(
     Color(0xFFFFBE0B), Color(0xFF22D9F2), Color(0xFFA27BFF), Color(0xFFFF3D8B),
     Color(0xFF3DDC84), Color(0xFFFF8A3D), Color(0xFF4D8BFF), Color(0xFFFF7AC6),
+    Color(0xFFF97316), Color(0xFF14B8A6), Color(0xFFEAB308), Color(0xFFEC4899),
 )
 
 fun profileColor(index: Int): Color = ProfilePalette[Math.floorMod(index, ProfilePalette.size)]
 
 @Composable
-fun ProfileAvatar(name: String, colorIndex: Int, size: Dp, kid: Boolean = false, modifier: Modifier = Modifier) {
+fun ProfileAvatar(
+    name: String,
+    colorIndex: Int,
+    size: Dp,
+    kid: Boolean = false,
+    modifier: Modifier = Modifier,
+    avatar: String = "",
+) {
     val color = profileColor(colorIndex)
+    val spec = ProfileAvatars.find(avatar)
     Box(modifier.size(size)) {
         Box(
             Modifier.fillMaxSize().clip(CircleShape)
                 .background(Brush.linearGradient(listOf(color, color.copy(alpha = 0.55f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                initials(name).take(1),
-                color = Color(0xFF0A0E1A), fontWeight = FontWeight.Bold,
-                fontSize = (size.value * 0.42f).sp, textAlign = TextAlign.Center,
-            )
+            if (spec != null) {
+                AvatarGlyph(spec, Color(0xFF0A0E1A), Modifier.size(size * 0.56f))
+            } else {
+                Text(
+                    initials(name).take(1),
+                    color = Color(0xFF0A0E1A), fontWeight = FontWeight.Bold,
+                    fontSize = (size.value * 0.42f).sp, textAlign = TextAlign.Center,
+                )
+            }
         }
         if (kid) {
             Box(
@@ -315,6 +331,7 @@ fun WhoIsWatchingScreen(onPicked: () -> Unit, onManage: () -> Unit, onClose: (()
                             ProfileAvatar(
                                 p.name, p.colorIndex, avatar, kid = p.isKid,
                                 modifier = if (p.id == active?.id) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier,
+                                avatar = p.avatar,
                             )
                             Spacer(Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -363,7 +380,7 @@ fun ProfilesScreen() {
     val cloud by c.cloud.status.collectAsState()
     var menu by remember { mutableStateOf<ProfileEntity?>(null) }
     var rename by remember { mutableStateOf<ProfileEntity?>(null) }
-    var color by remember { mutableStateOf<ProfileEntity?>(null) }
+    var appearanceId by remember { mutableStateOf<String?>(null) }
     var newPin by remember { mutableStateOf<ProfileEntity?>(null) }
     var delete by remember { mutableStateOf<ProfileEntity?>(null) }
     var creating by remember { mutableIntStateOf(0) }
@@ -396,11 +413,11 @@ fun ProfilesScreen() {
                 if (p.isKid) "Profil enfant" else null,
                 if (p.pinHash.isNotBlank()) "Protégé par un code" else null,
             ).joinToString(" · "),
-            header = { ProfileAvatar(p.name, p.colorIndex, 56.dp, p.isKid, Modifier.padding(bottom = 10.dp)) },
+            header = { ProfileAvatar(p.name, p.colorIndex, 56.dp, p.isKid, Modifier.padding(bottom = 10.dp), avatar = p.avatar) },
             actions = buildList {
                 if (p.id != active?.id) add(ActionItem("Utiliser ce profil", Icons.Default.LockOpen) { scope.launch { c.profiles.select(p.id) } })
                 add(ActionItem("Renommer", Icons.Default.Edit) { rename = p })
-                add(ActionItem("Couleur", Icons.Default.Palette) { color = p })
+                add(ActionItem("Avatar et couleur", Icons.Default.Palette, detail = "Icône ou initiale, et couleur") { appearanceId = p.id })
                 add(
                     ActionItem(
                         if (p.isKid) "Ne plus être un profil enfant" else "Profil enfant", Icons.Default.ChildCare,
@@ -432,26 +449,13 @@ fun ProfilesScreen() {
     rename?.let { p ->
         TextInputDialog("Renommer", initial = p.name, label = "Prénom ou surnom", onConfirm = { n -> if (n.isNotBlank()) scope.launch { c.profiles.rename(p.id, n) } }, onDismiss = { rename = null })
     }
-    color?.let { p ->
-        ZapDialog(onDismiss = { color = null }) {
-            Column(Modifier.padding(22.dp)) {
-                Text("Couleur de ${p.name}", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ProfilePalette.indices.forEach { idx ->
-                        Tile(
-                            onClick = { scope.launch { c.profiles.setColor(p.id, idx) }; color = null },
-                            shape = CircleShape, focusScale = 1.15f,
-                        ) {
-                            Box(
-                                Modifier.size(44.dp).padding(4.dp).clip(CircleShape).background(profileColor(idx))
-                                    .then(if (idx == p.colorIndex) Modifier.border(3.dp, Color.White, CircleShape) else Modifier),
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    appearanceId?.let { id -> list.firstOrNull { it.id == id } }?.let { p ->
+        AvatarAndColorDialog(
+            profile = p,
+            onAvatar = { a -> scope.launch { c.profiles.setAvatar(p.id, a) } },
+            onColor = { idx -> scope.launch { c.profiles.setColor(p.id, idx) } },
+            onDismiss = { appearanceId = null },
+        )
     }
     newPin?.let { p ->
         NewPinDialog(title = "Code de ${p.name}", onDismiss = { newPin = null }) { pin -> scope.launch { c.profiles.setPin(p.id, pin) } }
@@ -490,7 +494,7 @@ fun ProfilesScreen() {
         ActionDialog(
             title = b.name,
             subtitle = "Sauvegarde : ${Fmt.dayTime(b.createdAt)}",
-            header = { ProfileAvatar(b.name, b.colorIndex, 56.dp, b.isKid, Modifier.padding(bottom = 10.dp)) },
+            header = { ProfileAvatar(b.name, b.colorIndex, 56.dp, b.isKid, Modifier.padding(bottom = 10.dp), avatar = b.avatar) },
             actions = listOf(
                 ActionItem("Restaurer ce profil", Icons.Default.Restore) { restore = b },
                 ActionItem("Supprimer la sauvegarde", Icons.Default.Delete, tint = VyzoColors.Red) { forget = b },
@@ -543,7 +547,7 @@ fun ProfilesScreen() {
         items(list, key = { it.id }) { p ->
             Tile(onClick = { menu = p }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), focusScale = 1.01f) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ProfileAvatar(p.name, p.colorIndex, 44.dp, p.isKid)
+                    ProfileAvatar(p.name, p.colorIndex, 44.dp, p.isKid, avatar = p.avatar)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.name, style = MaterialTheme.typography.bodyLarge)
@@ -593,7 +597,7 @@ fun ProfilesScreen() {
             items(orphans, key = { "sauvegarde-" + it.id }) { b ->
                 Tile(onClick = { orphan = b }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), focusScale = 1.01f) {
                     Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ProfileAvatar(b.name, b.colorIndex, 44.dp, b.isKid)
+                        ProfileAvatar(b.name, b.colorIndex, 44.dp, b.isKid, avatar = b.avatar)
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
                             Text(b.name, style = MaterialTheme.typography.bodyLarge)
@@ -619,7 +623,102 @@ fun ActiveProfileBadge(size: Dp, modifier: Modifier = Modifier) {
     val c = LocalContainer.current
     val p by c.profiles.active.collectAsState()
     val profile = p ?: return
-    ProfileAvatar(profile.name, profile.colorIndex, size, profile.isKid, modifier)
+    ProfileAvatar(profile.name, profile.colorIndex, size, profile.isKid, modifier, avatar = profile.avatar)
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AvatarAndColorDialog(
+    profile: ProfileEntity,
+    onAvatar: (String) -> Unit,
+    onColor: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val activeAvatar = ProfileManager.cleanAvatar(profile.avatar)
+    ZapDialog(onDismiss = onDismiss) {
+        Column(
+            Modifier.widthIn(max = 580.dp).heightIn(max = 540.dp).verticalScroll(rememberScrollState()).padding(22.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                ProfileAvatar(profile.name, profile.colorIndex, 56.dp, profile.isKid, avatar = profile.avatar)
+                Column {
+                    Text(profile.name, style = MaterialTheme.typography.titleLarge)
+                    Text("Avatar et couleur", style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("Avatar", style = MaterialTheme.typography.labelLarge, color = VyzoColors.TextDim)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AvatarChoiceTile(
+                    label = "Initiale",
+                    selected = activeAvatar.isEmpty(),
+                    onClick = { onAvatar("") },
+                ) { tint ->
+                    Text(initials(profile.name).take(1), color = tint, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                ProfileAvatars.all.forEach { spec ->
+                    AvatarChoiceTile(
+                        label = spec.label,
+                        selected = activeAvatar == spec.id,
+                        onClick = { onAvatar(spec.id) },
+                    ) { tint ->
+                        AvatarGlyph(spec, tint, Modifier.size(22.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text("Couleur", style = MaterialTheme.typography.labelLarge, color = VyzoColors.TextDim)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ProfilePalette.indices.forEach { idx ->
+                    val selected = Math.floorMod(profile.colorIndex, ProfilePalette.size) == idx
+                    Tile(onClick = { onColor(idx) }, shape = CircleShape, focusScale = 1.15f) {
+                        Box(
+                            Modifier.size(38.dp).padding(3.dp).clip(CircleShape).background(profileColor(idx))
+                                .then(if (selected) Modifier.border(3.dp, Color.White, CircleShape) else Modifier),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Tile(onClick = onDismiss, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primary) {
+                    Text(
+                        "Terminé",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AvatarChoiceTile(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    glyph: @Composable (Color) -> Unit,
+) {
+    Tile(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier,
+    ) { focused ->
+        val tint = if (focused) Color.White else VyzoColors.Text
+        Column(
+            Modifier.width(66.dp).padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { glyph(tint) }
+            Spacer(Modifier.height(4.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 /** Nom d'un profil pour les messages (« Principal », « Léa »…). */

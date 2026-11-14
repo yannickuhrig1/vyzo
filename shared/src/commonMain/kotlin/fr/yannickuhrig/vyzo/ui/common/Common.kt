@@ -318,10 +318,45 @@ object Fmt {
     private val dayShort = local("EEE d MMM")
     private val dateTime = local("EEE d MMM 'à' HH:mm")
     private val date = local("d MMMM yyyy")
+    private val isoDateFmt = local("yyyy-MM-dd")
+    private val dayMonthYear = local("d MMM yyyy")
 
     fun time(ms: Long): String = time.get()!!.format(Date(ms))
     fun range(start: Long, stop: Long): String = "${time(start)} – ${time(stop)}"
     fun date(ms: Long): String = date.get()!!.format(Date(ms))
+
+    /** Date locale YYYY-MM-DD pour comparer les dates de diffusion TMDB/TVmaze. */
+    fun todayIso(now: Long = System.currentTimeMillis()): String = isoDateFmt.get()!!.format(Date(now))
+
+    /** True si [iso] ("YYYY-MM-DD...") désigne aujourd'hui ou une date future. */
+    fun isFutureOrTodayIso(iso: String, now: Long = System.currentTimeMillis()): Boolean {
+        val norm = iso.trim().take(10)
+        return norm.length == 10 && norm >= todayIso(now)
+    }
+
+    /** Formate une date ISO ("2026-11-21") en « Aujourd'hui », « Demain », « Ven. 21 nov. » ou « 21 nov. 2027 ». */
+    fun isoDate(iso: String, now: Long = System.currentTimeMillis()): String {
+        val norm = iso.trim().take(10)
+        val parts = norm.split('-')
+        if (parts.size != 3) return norm
+        val y = parts[0].toIntOrNull() ?: return norm
+        val m = parts[1].toIntOrNull()?.takeIf { it in 1..12 } ?: return norm
+        val d = parts[2].toIntOrNull()?.takeIf { it in 1..31 } ?: return norm
+        val cal = java.util.Calendar.getInstance().apply {
+            clear()
+            set(y, m - 1, d, 12, 0, 0)
+        }
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+        return when (dayIndex(cal.timeInMillis) - dayIndex(now)) {
+            0L -> "Aujourd'hui"
+            1L -> "Demain"
+            -1L -> "Hier"
+            else -> {
+                val fmt = if (y == nowCal.get(java.util.Calendar.YEAR)) dayShort.get()!! else dayMonthYear.get()!!
+                fmt.format(cal.time).replaceFirstChar { it.uppercase() }
+            }
+        }
+    }
 
     fun day(ms: Long, now: Long = System.currentTimeMillis()): String {
         val diff = dayIndex(ms) - dayIndex(now)

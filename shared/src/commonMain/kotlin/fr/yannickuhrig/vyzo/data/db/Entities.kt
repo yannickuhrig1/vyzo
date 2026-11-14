@@ -203,6 +203,33 @@ data class MetadataCacheEntity(
     val fetchedAt: Long,
 )
 
+/** Nouveaux épisodes récemment détectés sur une série suivie (survit aux re-synchros d'épisodes). */
+@Entity(tableName = "series_episode_alert")
+data class SeriesEpisodeAlertEntity(
+    @PrimaryKey val seriesUid: String,
+    val latestSeason: Int,
+    val latestEpisode: Int,
+    val newCount: Int,
+    val freshSlots: String,
+    val detectedAt: Long,
+)
+
+/** Résumé léger de la diffusion à venir d'une série (rempli depuis TMDB / TVmaze). */
+@Entity(tableName = "series_schedule")
+data class SeriesScheduleEntity(
+    @PrimaryKey val seriesUid: String,
+    val status: String,
+    val nextSeason: Int,
+    val nextEpisode: Int,
+    val nextTitle: String,
+    val nextAirDate: String,
+    val upcomingSeason: Int,
+    val upcomingSeasonAirDate: String,
+    val upcomingSeasonEpisodes: Int,
+    val tmdbId: Int,
+    val checkedAt: Long,
+)
+
 /** Définition réelle d'un film, d'une série ou d'un épisode, relevée chez le fournisseur ou à la lecture. */
 @Entity(tableName = "stream_quality")
 data class StreamQualityEntity(
@@ -329,6 +356,8 @@ data class ProfileEntity(
     /** Profil local : l'appareil auquel il appartient (voir [fr.yannickuhrig.vyzo.data.profile.LocalProfiles]). Vide = suit le compte. */
     // Valeur par défaut dans la table : le profil créé à l'installation est inséré en SQL, sans cette colonne.
     @ColumnInfo(defaultValue = "") val localDeviceId: String = "",
+    /** Identifiant d'avatar choisi (chaîne vide = initiale du nom sur fond coloré). */
+    @ColumnInfo(defaultValue = "") val avatar: String = "",
 ) {
     /** Reste sur son appareil : jamais envoyé au compte, à une TV ni dans un fichier de sauvegarde. */
     val localOnly: Boolean get() = localDeviceId.isNotBlank()

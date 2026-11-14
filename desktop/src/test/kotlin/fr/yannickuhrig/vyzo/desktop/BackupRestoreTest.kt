@@ -114,7 +114,8 @@ class BackupRestoreTest {
         a.repo.toggleFavorite("$pa:L:101", ContentKind.LIVE)
         val groupId = a.repo.createGroup("Sport")
         a.repo.setInGroup(groupId, "$pa:L:101", ContentKind.LIVE, true)
-        val lea = a.profiles.create("Léa", isKid = true)
+        val lea = a.profiles.create("Léa", isKid = true, avatar = "astronaut")
+        a.profiles.setColor(lea.id, 10)
         a.profiles.select(lea.id)
         withTimeout(5_000) { a.profiles.active.first { it?.id == lea.id } }
         a.repo.toggleFavorite("$pa:M:502", ContentKind.MOVIE)
@@ -135,6 +136,9 @@ class BackupRestoreTest {
         val names = b.db.profiles().all().map { it.name }
         assertEquals("pas de profil « Principal » en double : $names", 1, names.count { it == "Principal" })
         assertTrue("Léa restaurée", "Léa" in names)
+        val restoredLea = b.db.profiles().all().first { it.name == "Léa" }
+        assertEquals("astronaut", restoredLea.avatar)
+        assertEquals(10, restoredLea.colorIndex)
         assertTrue("favori visible dans le profil actif", b.repo.isFavorite("$pb:L:101").first())
         assertEquals("groupe restauré", listOf("Sport"), b.repo.userGroups().first().map { it.name }.filter { it == "Sport" })
         assertTrue("catégorie masquée restaurée", b.db.categories().allPrefs().any { it.hidden })

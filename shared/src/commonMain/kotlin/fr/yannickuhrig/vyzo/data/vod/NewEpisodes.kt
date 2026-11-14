@@ -75,6 +75,7 @@ class NewEpisodeWatcher(
             val fresh = NewEpisodes.between(before, db.series().episodesList(series.uid))
             if (fresh.isNotEmpty()) found += NewEpisodes(series, fresh)
         }
+        db.seriesTracking().deleteExpiredAlerts(now - ALERT_RETENTION_MS)
         for (n in found) platform.notifyNewEpisodes(n.title, n.body, n.series.uid)
         found
     }

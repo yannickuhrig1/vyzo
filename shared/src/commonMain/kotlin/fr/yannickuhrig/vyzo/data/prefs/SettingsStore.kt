@@ -166,6 +166,8 @@ data class AppSettings(
     val homeRowsByProfile: Map<String, List<String>> = emptyMap(),
     /** La rangée « Pour toi » a déjà été ajoutée une fois aux accueils existants (on ne la remet pas si on l'enlève). */
     val forYouRowAdded: Boolean = false,
+    /** La rangée « Nouveaux épisodes à voir » a déjà été ajoutée une fois aux accueils existants. */
+    val newEpisodesRowAdded: Boolean = false,
     /** Accueil : horloge et date en haut à droite. */
     val homeClock: Boolean = true,
     /** Accueil : l'arrière-plan fait défiler les affiches tant qu'on ne parcourt pas les rangées. */
@@ -223,6 +225,13 @@ data class AppSettings(
         if (forYouRowAdded) return this
         val add = fr.yannickuhrig.vyzo.data.home.HomeRows::withForYou
         return copy(homeRows = add(homeRows), homeRowsByProfile = homeRowsByProfile.mapValues { add(it.value) }, forYouRowAdded = true)
+    }
+
+    /** Ajoute une seule fois « Nouveaux épisodes à voir » à tous les accueils déjà en place. */
+    fun withNewEpisodesRow(): AppSettings {
+        if (newEpisodesRowAdded) return this
+        val add = fr.yannickuhrig.vyzo.data.home.HomeRows::withNewEpisodes
+        return copy(homeRows = add(homeRows), homeRowsByProfile = homeRowsByProfile.mapValues { add(it.value) }, newEpisodesRowAdded = true)
     }
 
     /** Donne l'accueil du profil [profileId] à tous les profils (il devient la mise en page commune). */

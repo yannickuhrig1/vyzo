@@ -473,6 +473,7 @@ class SyncManager(
         info["info"]?.let { it as? JsonObject }?.let { i ->
             db.series().updateDetails(series.uid, i.str("plot"), i.strOrFirst("backdrop_path"), i.str("cast"), i.str("genre"))
         }
+        val before = db.series().episodesList(series.uid)
         val eps = ArrayList<EpisodeEntity>()
         val sizes = ArrayList<StreamQualityEntity>()
         fun add(o: JsonObject, seasonKey: String) {
@@ -503,6 +504,9 @@ class SyncManager(
         if (eps.isNotEmpty()) {
             db.series().upsertEpisodes(eps)
             db.series().deleteStaleEpisodes(series.uid, token)
+            if (before.isNotEmpty()) {
+                fr.yannickuhrig.vyzo.data.vod.SeriesTracking.recordNewEpisodesIfChanged(db, series, before, eps)
+            }
         }
         db.streamQuality().record(sizes, series.uid)
     }
@@ -854,6 +858,8 @@ class SyncManager(
         db.movies().deleteForPlaylist(pid)
         db.series().deleteForPlaylist(pid)
         db.series().deleteEpisodesForPlaylist(pid)
+        db.seriesTracking().deleteAlertsForPlaylist("$pid:")
+        db.seriesTracking().deleteSchedulesForPlaylist("$pid:")
         db.categories().deleteForPlaylist(pid)
         db.epg().autoSourcesFor(pid).forEach { db.programs().deleteSource("src:${it.id}") }
         db.epg().deleteSourcesFor(pid)

@@ -263,7 +263,11 @@ private fun VodTile(item: VodItem, tv: Boolean, onFocus: (HomeItem) -> Unit, onC
         modifier = Modifier.width(if (desktop) 156.dp else if (tv) 118.dp else 104.dp), focusScale = 1.08f, hoverScale = 1.05f, shape = RoundedCornerShape(10.dp),
     ) {
         Column(Modifier.padding(3.dp)) {
-            PosterArt(item.title, item.poster, item.rating, item.uhd, progress = item.progress, genre = item.genre)
+            PosterArt(
+                item.title, item.poster, item.rating, item.uhd,
+                progress = item.progress, genre = item.genre,
+                badge = item.badge, badgeUpcoming = item.badgeUpcoming,
+            )
             if (!tv || desktop) Text(item.title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
         }
     }

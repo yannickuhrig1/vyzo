@@ -134,6 +134,8 @@ data class VodCard(
     val genre: String = "",
     val backdrop: String = "",
     val plot: String = "",
+    val badge: String = "",
+    val badgeUpcoming: Boolean = false,
 )
 
 /** Rubriques de la liste des catégories : la bibliothèque, les genres automatiques, puis les catégories du fournisseur. */
@@ -277,12 +279,14 @@ class VodViewModel(private val c: AppContainer, val kind: ContentKind) : ViewMod
                     )
                 }
             }
-            else combine(c.repo.series(key), quality, done) { l, q, p ->
+            else combine(c.repo.series(key), quality, done, c.repo.seriesTrackingMap()) { l, q, p, tr ->
                 val g = labels()
                 l.map {
+                    val info = tr[it.uid]
                     VodCard(
                         it.uid, it.name, it.poster, it.rating, it.year, it.addedAt, it.releaseDate, q.isUhd(it.uid, it.name, it.categoryUid), p[it.uid] ?: 0f,
                         g.getOrPut(it.genre) { Genres.primaryLabel(it.genre) }, it.backdrop, it.plot,
+                        badge = info?.badge.orEmpty(), badgeUpcoming = info?.badgeUpcoming == true,
                     )
                 }
             }
@@ -593,7 +597,11 @@ fun VodSpotlight(card: VodCard, eyebrow: String, onOpen: () -> Unit, modifier: M
 fun PosterCard(card: VodCard, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Tile(onClick = onClick, modifier = modifier, focusScale = 1.06f, hoverScale = 1.05f, shape = RoundedCornerShape(10.dp)) { focused ->
         Column(Modifier.padding(4.dp)) {
-            PosterArt(card.title, card.poster, card.rating, card.uhd, progress = card.progress, genre = card.genre)
+            PosterArt(
+                card.title, card.poster, card.rating, card.uhd,
+                progress = card.progress, genre = card.genre,
+                badge = card.badge, badgeUpcoming = card.badgeUpcoming,
+            )
             // Le titre seul sur sa ligne, l'année et le genre en dessous : les lignes restent alignées d'une carte à l'autre.
             Text(
                 card.title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,

@@ -75,7 +75,7 @@ class DesktopCloudSyncTest {
         val pc = Device()
 
         val pt = tv.addXtream("Abonnement")
-        val lea = tv.c.profiles.create("Léa", isKid = true)
+        val lea = tv.c.profiles.create("Léa", isKid = true, avatar = "star")
         tv.use(lea.id)
         tv.c.repo.toggleFavorite("$pt:L:101", ContentKind.LIVE)
         tv.c.repo.saveProgress("$pt:M:502", ContentKind.MOVIE, "", 600_000, 6_000_000)
@@ -85,7 +85,11 @@ class DesktopCloudSyncTest {
         // Vyzo PC se connecte au même compte : il retrouve Léa, son favori et son film entamé.
         val pp = pc.addXtream("Mon IPTV")
         pc.cloud.signIn("foyer@example.fr", "motdepasse")
-        assertTrue(pc.c.db.profiles().all().any { it.id == lea.id && it.isKid })
+        assertTrue(pc.c.db.profiles().all().any { it.id == lea.id && it.isKid && it.avatar == "star" })
+        pc.c.profiles.setAvatar(lea.id, "rocket")
+        pc.cloud.sync().getOrThrow()
+        tv.cloud.sync().getOrThrow()
+        assertEquals("rocket", tv.c.db.profiles().get(lea.id)?.avatar)
         pc.use(lea.id)
         assertTrue(pc.c.repo.isFavorite("$pp:L:101").first())
         assertEquals(listOf("$pp:M:502"), pc.c.repo.movies(Repository.KEY_CONTINUE).first().map { it.uid })

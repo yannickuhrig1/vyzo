@@ -40,7 +40,7 @@ data class BackupEpg(
 @Serializable
 data class BackupProfile(
     val id: String, val name: String, val colorIndex: Int = 0, val isKid: Boolean = false,
-    val pinHash: String = "", val position: Int = 0,
+    val pinHash: String = "", val position: Int = 0, val avatar: String = "",
 )
 
 /** [profileId] vide : sauvegarde d'avant les profils (groupe rattaché au profil actif). */
@@ -159,7 +159,7 @@ object BackupManager {
             items = db.groups().allItems().filter { it.itemUid.isNotBlank() && it.profileId !in local }
                 .map { BackupItem(it.groupId, it.itemUid, it.kind.name, it.position, it.profileId) },
             categoryPrefs = db.categories().allPrefs().map { BackupPref(it.uid, it.hidden, it.position, it.locked, it.name) },
-            profiles = db.profiles().all().filter { !it.localOnly }.map { BackupProfile(it.id, it.name, it.colorIndex, it.isKid, it.pinHash, it.position) },
+            profiles = db.profiles().all().filter { !it.localOnly }.map { BackupProfile(it.id, it.name, it.colorIndex, it.isKid, it.pinHash, it.position, it.avatar) },
             channelPrefs = db.channelPrefs().all().map { BackupChannelPref(it.uid, it.name, it.number, it.epgKey, it.locked, it.hidden) },
         )
     }
@@ -356,7 +356,7 @@ object BackupManager {
         db.withTransaction {
             b.profiles.forEach { p ->
                 db.profiles().upsert(
-                    ProfileEntity(p.id, p.name, p.colorIndex, p.isKid, p.pinHash, p.position, updatedAt = now, deleted = false, dirty = true),
+                    ProfileEntity(p.id, p.name, p.colorIndex, p.isKid, p.pinHash, p.position, updatedAt = now, deleted = false, dirty = true, avatar = p.avatar),
                 )
             }
             // Groupes et favoris des profils restaurés (la suppression part aussi vers le compte Vyzo)

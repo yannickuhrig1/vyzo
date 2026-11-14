@@ -94,6 +94,8 @@ fun PosterArt(
     modifier: Modifier = Modifier,
     progress: Float = 0f,
     genre: String = "",
+    badge: String = "",
+    badgeUpcoming: Boolean = false,
 ) {
     Box(
         modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(PosterShape).background(VyzoColors.SurfaceHigh)
@@ -103,9 +105,22 @@ fun PosterArt(
             poster, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, fallback = title,
             fallbackContent = { PosterTitleArt(title, genre, Modifier.fillMaxSize()) },
         )
-        if (uhd) PosterBadge("4K", Color.White, Alignment.TopStart)
+        if (uhd) PosterBadge("4K", Color.White, Modifier.align(Alignment.TopStart).padding(5.dp))
         // Certains catalogues donnent des notes hors échelle.
-        if (rating > 0f && rating <= 10f) PosterBadge("★ %.1f".format(rating), VyzoColors.Amber, Alignment.TopEnd)
+        if (rating > 0f && rating <= 10f) PosterBadge("★ %.1f".format(rating), VyzoColors.Amber, Modifier.align(Alignment.TopEnd).padding(5.dp))
+        if (badge.isNotBlank()) {
+            PosterBadge(
+                text = badge,
+                color = if (badgeUpcoming) Color.White else Color.Black,
+                modifier = Modifier.align(Alignment.BottomStart).padding(
+                    start = 5.dp,
+                    end = 5.dp,
+                    bottom = if (progress > 0f) 9.dp else 5.dp,
+                ),
+                background = if (badgeUpcoming) Color(0xEB2563EB) else VyzoColors.Amber,
+                border = null,
+            )
+        }
         if (progress > 0f) {
             Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66000000))) {
                 Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(VyzoColors.Amber))
@@ -115,12 +130,19 @@ fun PosterArt(
 }
 
 @Composable
-private fun BoxScope.PosterBadge(text: String, color: Color, corner: Alignment) {
+private fun PosterBadge(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    background: Color = Color(0x99000000),
+    border: Color? = Color(0x26FFFFFF),
+) {
     Text(
         text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = color, maxLines = 1,
-        modifier = Modifier.align(corner).padding(5.dp)
-            .background(Color(0x99000000), RoundedCornerShape(5.dp))
-            .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(5.dp))
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .background(background, RoundedCornerShape(5.dp))
+            .then(if (border != null) Modifier.border(1.dp, border, RoundedCornerShape(5.dp)) else Modifier)
             .padding(horizontal = 5.dp, vertical = 1.dp),
     )
 }

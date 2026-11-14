@@ -29,8 +29,9 @@ const val DEFAULT_PROFILE_NAME = "Principal"
         WatchProgressEntity::class, ChannelHistoryEntity::class, ReminderEntity::class, RecordingEntity::class,
         ProfileEntity::class, ChannelPrefEntity::class, SyncTombstoneEntity::class, RecordingRuleEntity::class,
         DownloadEntity::class, StreamQualityEntity::class, MetadataCacheEntity::class,
+        SeriesEpisodeAlertEntity::class, SeriesScheduleEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 @ConstructedBy(AppDatabaseConstructor::class)
@@ -53,6 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun downloads(): DownloadDao
     abstract fun streamQuality(): StreamQualityDao
     abstract fun metadataCache(): MetadataCacheDao
+    abstract fun seriesTracking(): SeriesTrackingDao
 
     companion object {
         /** Termine la configuration commune d'une base créée par la plateforme (fichier, pilote SQLite). */
@@ -69,7 +71,11 @@ abstract class AppDatabase : RoomDatabase() {
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                 .build()
 
-        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+        val MIGRATIONS: Array<Migration>
+            get() = arrayOf(
+                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            )
 
         private fun insertFavoritesGroup(db: SQLiteConnection) {
             db.execSQL(
@@ -286,6 +292,29 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `metadata_cache` (`cacheKey` TEXT NOT NULL, `body` TEXT NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`cacheKey`))",
+                )
+            }
+        }
+
+        /**
+         * 8 → 9 : avatar des profils, alertes de nouveaux épisodes et planning de diffusion des séries.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE `profile` ADD COLUMN `avatar` TEXT NOT NULL DEFAULT ''")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `series_episode_alert` (" +
+                        "`seriesUid` TEXT NOT NULL, `latestSeason` INTEGER NOT NULL, `latestEpisode` INTEGER NOT NULL, " +
+                        "`newCount` INTEGER NOT NULL, `freshSlots` TEXT NOT NULL, `detectedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`seriesUid`))",
+                )
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `series_schedule` (" +
+                        "`seriesUid` TEXT NOT NULL, `status` TEXT NOT NULL, `nextSeason` INTEGER NOT NULL, " +
+                        "`nextEpisode` INTEGER NOT NULL, `nextTitle` TEXT NOT NULL, `nextAirDate` TEXT NOT NULL, " +
+                        "`upcomingSeason` INTEGER NOT NULL, `upcomingSeasonAirDate` TEXT NOT NULL, " +
+                        "`upcomingSeasonEpisodes` INTEGER NOT NULL, `tmdbId` INTEGER NOT NULL, " +
+                        "`checkedAt` INTEGER NOT NULL, PRIMARY KEY(`seriesUid`))",
                 )
             }
         }

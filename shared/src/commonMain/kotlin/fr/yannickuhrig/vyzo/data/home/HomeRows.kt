@@ -13,6 +13,7 @@ object HomeRows {
     /** Matchs en cours sur les chaînes de sport (d'après le guide). */
     const val SPORT_LIVE = "sport_live"
     const val CONTINUE_SERIES = "continue_series"
+    const val NEW_EPISODES = "new_episodes"
     const val CONTINUE_MOVIES = "continue_movies"
     /** Films et séries choisis d'après ce que le profil regarde (calcul local). */
     const val FOR_YOU = "for_you"
@@ -36,13 +37,13 @@ object HomeRows {
 
     /** Rangées proposées, dans l'ordre par défaut. */
     val BUILT_IN = listOf(
-        ON_AIR, SPORT_LIVE, CONTINUE_SERIES, CONTINUE_MOVIES, FOR_YOU, FAV_CHANNELS, RECENT_CHANNELS, ADDED_MOVIES, TOP_MOVIES,
+        ON_AIR, SPORT_LIVE, CONTINUE_SERIES, NEW_EPISODES, CONTINUE_MOVIES, FOR_YOU, FAV_CHANNELS, RECENT_CHANNELS, ADDED_MOVIES, TOP_MOVIES,
         ADDED_SERIES, TOP_SERIES, TRENDING_MOVIES, TRENDING_SERIES, FAV_MOVIES, FAV_SERIES,
         TRAKT_WATCHLIST_MOVIES, TRAKT_WATCHLIST_SERIES, TRAKT_RECO_MOVIES, TRAKT_RECO_SERIES, APPS,
     )
 
     /** Rangées affichées au premier lancement. */
-    val DEFAULT = listOf(ON_AIR, CONTINUE_SERIES, CONTINUE_MOVIES, FOR_YOU, FAV_CHANNELS, RECENT_CHANNELS, ADDED_MOVIES, TOP_MOVIES, ADDED_SERIES, APPS)
+    val DEFAULT = listOf(ON_AIR, CONTINUE_SERIES, NEW_EPISODES, CONTINUE_MOVIES, FOR_YOU, FAV_CHANNELS, RECENT_CHANNELS, ADDED_MOVIES, TOP_MOVIES, ADDED_SERIES, APPS)
 
     fun isGenre(id: String) = id.startsWith(GENRE_MOVIES) || id.startsWith(GENRE_SERIES)
 
@@ -58,6 +59,7 @@ object HomeRows {
         id == ADDED_SERIES -> "Séries ajoutées récemment"
         id == TOP_MOVIES -> "Films les mieux notés"
         id == TOP_SERIES -> "Séries les mieux notées"
+        id == NEW_EPISODES -> "Nouveaux épisodes à voir"
         id == TRENDING_MOVIES -> "Films en tendance"
         id == TRENDING_SERIES -> "Séries en tendance"
         id == FAV_MOVIES -> "Films favoris"
@@ -81,6 +83,16 @@ object HomeRows {
         val after = rows.indexOfLast { it == CONTINUE_SERIES || it == CONTINUE_MOVIES }
             .takeIf { it >= 0 } ?: rows.indexOf(ON_AIR)
         return rows.toMutableList().apply { add(after + 1, FOR_YOU) }
+    }
+
+    /**
+     * Ajoute « Nouveaux épisodes à voir » après « Reprendre — séries » (sinon après « À l'antenne », sinon en tête).
+     * Rien ne change si la rangée est déjà présente.
+     */
+    fun withNewEpisodes(rows: List<String>): List<String> {
+        if (NEW_EPISODES in rows) return rows
+        val after = rows.indexOf(CONTINUE_SERIES).takeIf { it >= 0 } ?: rows.indexOf(ON_AIR)
+        return rows.toMutableList().apply { add(after + 1, NEW_EPISODES) }
     }
 
     /** Monte ([delta] = -1) ou descend (+1) une rangée. */

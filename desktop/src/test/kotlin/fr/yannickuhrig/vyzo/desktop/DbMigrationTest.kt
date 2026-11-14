@@ -6,6 +6,8 @@ import androidx.sqlite.execSQL
 import fr.yannickuhrig.vyzo.data.db.AppDatabase
 import fr.yannickuhrig.vyzo.data.db.DATABASE_NAME
 import fr.yannickuhrig.vyzo.data.db.MetadataCacheEntity
+import fr.yannickuhrig.vyzo.data.db.SeriesEpisodeAlertEntity
+import fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity
 import fr.yannickuhrig.vyzo.data.db.StreamQualityEntity
 import fr.yannickuhrig.vyzo.data.db.record
 import kotlinx.coroutines.Dispatchers
@@ -92,6 +94,35 @@ class DbMigrationTest {
         assertEquals("Perso", source.name)
         assertEquals(0, source.priority)
         assertEquals("FILL", source.mode)
+        db.close()
+    }
+
+    @Test
+    fun uneBaseEnVersion8GagneAvatarsEtSuiviSeries() = runBlocking {
+        val file = Files.createTempDirectory("vyzo-migration").toFile().resolve(DATABASE_NAME)
+        createFromSchema(file, 8)
+        BundledSQLiteDriver().open(file.absolutePath).use {
+            it.execSQL(
+                "INSERT INTO profile (id, name, colorIndex, isKid, pinHash, position, updatedAt, deleted, dirty, localDeviceId) " +
+                    "VALUES ('p1', 'Yannick', 0, 0, '', 0, 100, 0, 0, '')",
+            )
+        }
+        val db = AppDatabase.build(
+            Room.databaseBuilder<AppDatabase>(name = file.absolutePath)
+                .setDriver(BundledSQLiteDriver())
+                .setQueryCoroutineContext(Dispatchers.IO),
+        )
+        val profile = db.profiles().get("p1")!!
+        assertEquals("Yannick", profile.name)
+        assertEquals("", profile.avatar)
+
+        db.seriesTracking().upsertAlert(SeriesEpisodeAlertEntity("1:S:10", 5, 8, 2, "5:7|5:8", 200L))
+        assertEquals("5:7|5:8", db.seriesTracking().alert("1:S:10")?.freshSlots)
+
+        db.seriesTracking().upsertSchedule(
+            SeriesScheduleEntity("1:S:10", "Returning Series", 5, 9, "Le Départ", "2026-11-19", 0, "", 0, 42, 300L),
+        )
+        assertEquals("2026-11-19", db.seriesTracking().schedule("1:S:10")?.nextAirDate)
         db.close()
     }
 }

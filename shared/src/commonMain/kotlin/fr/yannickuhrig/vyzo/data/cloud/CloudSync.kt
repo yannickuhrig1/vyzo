@@ -1036,12 +1036,13 @@ class CloudSync(
 
     private fun ProfileEntity.toJson() = buildJsonObject {
         put("id", id); put("name", name); put("color_index", colorIndex); put("is_kid", isKid); put("pin_hash", pinHash)
-        put("position", position); put("updated_at", updatedAt); put("deleted", deleted)
+        put("avatar", avatar); put("position", position); put("updated_at", updatedAt); put("deleted", deleted)
     }
 
     private fun JsonObject.toProfile() = ProfileEntity(
         id = str("id"), name = str("name").ifBlank { "Profil" }, colorIndex = int("color_index"), isKid = bool("is_kid"),
         pinHash = str("pin_hash"), position = int("position"), updatedAt = long("updated_at"), deleted = false, dirty = false,
+        avatar = str("avatar"),
     )
 
     private fun UserGroupEntity.toJson() = listJson(profileId, syncId, name, position, updatedAt, deleted = false)

@@ -9,6 +9,7 @@ export interface Profile {
   colorIndex: number
   isKid: boolean
   pinHash: string
+  avatar: string
   position: number
   updatedAt: number
 }
@@ -152,9 +153,11 @@ export function updateInProgress(d: Device, now: number = Date.now()): boolean {
 /** Mêmes couleurs que ProfilePalette (ui/profile/ProfileScreens.kt). */
 export const PROFILE_PALETTE = [
   '#FFBE0B', '#22D9F2', '#A27BFF', '#FF3D8B', '#3DDC84', '#FF8A3D', '#4D8BFF', '#FF7AC6',
+  '#F97316', '#14B8A6', '#EAB308', '#EC4899',
 ] as const
 
 export const MAX_PROFILE_NAME = 24
+export const MAX_PROFILE_AVATAR = 40
 
 /** Identifiant d'expéditeur des modifications faites depuis le site. */
 export const WEB_SENDER = 'Vyzo Web'
@@ -168,6 +171,12 @@ export function profileColor(index: number): string {
 export function cleanName(name: string): string {
   const clean = Array.from(name.trim().replace(/\s+/g, ' ')).slice(0, MAX_PROFILE_NAME).join('')
   return clean || 'Profil'
+}
+
+/** Comme ProfileManager.cleanAvatar. */
+export function cleanAvatar(avatar: string): string {
+  const clean = avatar.trim().toLowerCase().slice(0, MAX_PROFILE_AVATAR)
+  return clean === 'initial' ? '' : clean
 }
 
 /** Comme ProfileManager.nextColor : première couleur libre, sinon on recommence le tour. */

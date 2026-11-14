@@ -221,7 +221,7 @@ class LocalProfileTest {
     fun sauvegardeEtRestaurationSurCetAppareil() = scenario {
         val pc = Device()
         val pid = pc.addXtream()
-        val secret = pc.c.localProfiles.create("Secret", isKid = true)
+        val secret = pc.c.localProfiles.create("Secret", isKid = true, avatar = "owl")
         pc.c.profiles.setPin(secret.id, "1234")
         pc.use(secret.id)
         pc.c.repo.toggleFavorite("$pid:L:101", ContentKind.LIVE)
@@ -251,6 +251,7 @@ class LocalProfileTest {
         pc.c.localProfiles.restore(secret.id)
         val back = pc.c.db.profiles().get(secret.id)!!
         assertTrue(back.localOnly && back.isKid)
+        assertEquals("owl", back.avatar)
         assertTrue(pc.c.profiles.checkPin(back, "1234"))
         pc.use(secret.id)
         assertTrue(pc.c.repo.isFavorite("$pid:L:101").first())

@@ -166,7 +166,7 @@ private fun TvRail(args: MenuArgs, inside: Boolean, group: Modifier, pick: (Stri
             }
             profile?.let { p ->
                 MenuRow(active = false, Modifier.fillMaxWidth().height(dpx(84)), start = 11.dp, onClick = args.onProfile) { focused ->
-                    ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid)
+                    ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid, avatar = p.avatar)
                     if (expanded) {
                         Spacer(Modifier.width(14.dp))
                         Column {
@@ -222,7 +222,7 @@ private fun TvBar(args: MenuArgs, group: Modifier, pick: (String) -> Unit) {
         if (unlocked) MenuItem(Icons.Default.LockOpen, "Reverrouiller", active = false, expanded = false, Modifier.height(dpx(62)), end = 14.dp) { c.lockVault() }
         profile?.let { p ->
             MenuRow(active = false, Modifier.height(dpx(62)), start = 6.dp, end = 6.dp, onClick = args.onProfile) {
-                ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid)
+                ProfileAvatar(p.name, p.colorIndex, 30.dp, p.isKid, avatar = p.avatar)
             }
         }
     }

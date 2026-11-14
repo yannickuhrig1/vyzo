@@ -72,11 +72,13 @@ class TmdbParsingTest {
     @Test
     fun `episodes d'une saison`() {
         val eps = parseSeasonEpisodes(json("""{"episodes":[
-            {"episode_number":1,"season_number":2,"name":"Pilote","overview":"Résumé","still_path":"/a.jpg"},
+            {"episode_number":1,"season_number":2,"name":"Pilote","overview":"Résumé","still_path":"/a.jpg","air_date":"2026-11-20"},
             {"episode_number":2,"season_number":2,"name":"Suite","overview":"","still_path":null}]}"""))
         assertEquals(2, eps.size)
         assertEquals("https://image.tmdb.org/t/p/w500/a.jpg", eps[0].stillUrl)
+        assertEquals("2026-11-20", eps[0].airDate)
         assertNull(eps[1].stillUrl)
+        assertEquals("", eps[1].airDate)
     }
 
     @Test

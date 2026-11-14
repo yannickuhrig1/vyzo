@@ -7,10 +7,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -78,7 +81,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.yannickuhrig.vyzo.data.db.DownloadEntity
 import fr.yannickuhrig.vyzo.data.db.EpisodeEntity
+import fr.yannickuhrig.vyzo.data.db.SeriesScheduleEntity
 import fr.yannickuhrig.vyzo.data.tmdb.TmdbEpisode
+import fr.yannickuhrig.vyzo.data.vod.SeriesTracking
 import fr.yannickuhrig.vyzo.ui.vod.detailBadges
 import fr.yannickuhrig.vyzo.data.db.WatchProgressEntity
 import fr.yannickuhrig.vyzo.ui.common.Fmt
@@ -139,12 +144,16 @@ fun TvSeriesDetail(
     val episodeMeta by vm.episodeMeta.collectAsState()
     val downloads by vm.downloads.collectAsState()
     val qualities by vm.qualities.collectAsState()
+    val schedule by vm.schedule.collectAsState()
+    val freshSlots by vm.freshSlots.collectAsState()
+    val upcomingBySeason by vm.upcomingBySeason.collectAsState()
     val s = series ?: return Loading()
 
     val eps = episodes.orEmpty()
     val seasons = eps.map { it.season }.distinct().sorted()
     val season = seasonSel ?: seasons.firstOrNull()
     val shown = eps.filter { it.season == season }
+    val upcoming = vm.upcomingForSeason(season, shown, upcomingBySeason)
     LaunchedEffect(season) { season?.let(vm::loadSeasonMeta) }
     val resume = vm.resumeTarget(eps, progress)
 
@@ -216,6 +225,7 @@ fun TvSeriesDetail(
                     badges = detailBadges(enrichment?.certification, ratings),
                     plot = s.plot.ifBlank { enrichment?.overview.orEmpty() },
                     modifier = Modifier.scrollsToOnFocus(page, 0),
+                    below = { TvSeriesTrackingRow(freshSlots.size, schedule) },
                 ) {
                     if (resume != null) {
                         val (ep, pos) = resume
@@ -295,6 +305,7 @@ fun TvSeriesDetail(
                                             progress = progress[ep.uid],
                                             quality = qualities[ep.uid],
                                             tmdb = episodeMeta[ep.season to ep.episode],
+                                            isFresh = (ep.season to ep.episode) in freshSlots,
                                             download = downloads[ep.uid],
                                             focus = focusOf(ep.uid),
                                             onFocus = { lastEpisode = ep.uid },
@@ -306,6 +317,13 @@ fun TvSeriesDetail(
                                                 backFromEpisode = true
                                                 onPlayEpisode(ep, progress[ep.uid]?.let { episodeResumeMs(it.positionMs, it.durationMs) } ?: 0)
                                             },
+                                        )
+                                    }
+                                    items(upcoming, key = { "upcoming-${it.season}-${it.number}" }) { ep ->
+                                        UpcomingTvEpisodeRow(
+                                            ep = ep,
+                                            focus = focusOf("upcoming-${ep.season}-${ep.number}"),
+                                            onLeft = { runCatching { seasonEntry.requestFocus() } },
                                         )
                                     }
                                 }
@@ -391,6 +409,48 @@ private fun SeasonEntry(
     }
 }
 
+/** Bannières « nouveaux épisodes à voir » et « prochaine diffusion » dans l'en-tête TV. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TvSeriesTrackingRow(freshCount: Int, schedule: SeriesScheduleEntity?) {
+    val schedDisplay = schedule?.let { SeriesTracking.formatScheduleDisplay(it) }
+    val freshLabel = SeriesTracking.alertBannerLabel(freshCount)
+    if (freshLabel.isBlank() && schedDisplay == null) return
+    FlowRow(
+        Modifier.padding(top = dpx(4)),
+        horizontalArrangement = Arrangement.spacedBy(dpx(10)),
+        verticalArrangement = Arrangement.spacedBy(dpx(10)),
+    ) {
+        if (freshLabel.isNotBlank()) {
+            Text(
+                freshLabel,
+                color = Color.Black,
+                fontSize = spx(16),
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Accent1).padding(horizontal = dpx(14), vertical = dpx(5)),
+            )
+        }
+        if (schedDisplay != null) {
+            val bg = if (schedDisplay.hasUpcomingDate) Color(0xCC1E3A8A) else Color(0x1FFFFFFF)
+            val fg = when {
+                schedDisplay.hasUpcomingDate -> Color(0xFFBFDBFE)
+                schedDisplay.isEnded -> Tok.TextLow
+                else -> Accent2
+            }
+            Text(
+                schedDisplay.banner,
+                color = fg,
+                fontSize = spx(16),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = dpx(14), vertical = dpx(5)),
+            )
+        }
+    }
+}
+
 /** Un épisode : image, titre, résumé, avancement, et le téléchargement au bout de la ligne. */
 @Composable
 private fun EpisodeRow(
@@ -398,6 +458,7 @@ private fun EpisodeRow(
     progress: WatchProgressEntity?,
     quality: String?,
     tmdb: TmdbEpisode? = null,
+    isFresh: Boolean = false,
     download: DownloadEntity?,
     focus: FocusRequester,
     onFocus: () -> Unit,
@@ -437,6 +498,13 @@ private fun EpisodeRow(
                         Icon(Icons.Default.PlayArrow, null, Modifier.size(dpx(34)), tint = Color.White)
                     }
                 }
+                if (isFresh && !watched) {
+                    Text(
+                        "NOUVEAU", color = Color.Black, fontSize = spx(13), fontWeight = FontWeight.Bold, maxLines = 1,
+                        modifier = Modifier.align(Alignment.TopStart).padding(dpx(8)).clip(RoundedCornerShape(50))
+                            .background(Accent1).padding(horizontal = dpx(10), vertical = dpx(3)),
+                    )
+                }
                 if (watched) {
                     Text(
                         "Vu", color = Color.White, fontSize = spx(14), fontWeight = FontWeight.SemiBold, maxLines = 1,
@@ -452,7 +520,8 @@ private fun EpisodeRow(
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(dpx(4))) {
                 Text(episodeTitle(ep.episode, ep.title), color = Tok.TextHi, fontSize = spx(if (f) 26 else 24), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val meta = listOfNotNull(Fmt.minutes(ep.durationSecs).ifBlank { null }, quality).joinToString(" · ")
+                val airDate = tmdb?.airDate?.takeIf { it.isNotBlank() }?.let { Fmt.isoDate(it) }
+                val meta = listOfNotNull(airDate, Fmt.minutes(ep.durationSecs).ifBlank { null }, quality).joinToString(" · ")
                 if (meta.isNotBlank()) Text(meta, color = Tok.TextLow, fontSize = spx(16), maxLines = 1)
                 if (plot.isNotBlank()) Text(plot, color = Tok.TextMid, fontSize = spx(18), lineHeight = spx(25), maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
@@ -460,6 +529,41 @@ private fun EpisodeRow(
         Row(horizontalArrangement = Arrangement.spacedBy(dpx(14)), verticalAlignment = Alignment.CenterVertically) {
             EpisodeWatched(watched, onToggleWatched)
             EpisodeDownload(download, onDownload)
+        }
+    }
+}
+
+/** Épisode annoncé sur TMDB mais pas encore présent chez le fournisseur. */
+@Composable
+private fun UpcomingTvEpisodeRow(ep: TmdbEpisode, focus: FocusRequester, onLeft: () -> Unit) {
+    var f by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(dpx(16))
+    Row(
+        Modifier.fillMaxWidth()
+            .graphicsLayer { alpha = if (f) 0.85f else 0.58f }
+            .focusGlow(f, shape).clip(shape).background(Color(0x06FFFFFF))
+            .focusRequester(focus)
+            .onFocusChanged { f = it.isFocused }
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) { onLeft(); true } else false
+            }
+            .focusable()
+            .padding(dpx(12)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dpx(18)),
+    ) {
+        Box(Modifier.width(dpx(300)).height(dpx(169)).clip(RoundedCornerShape(dpx(10))).background(Surf2), contentAlignment = Alignment.Center) {
+            Text("${ep.number}", color = Tok.TextLow, fontSize = spx(44), fontWeight = FontWeight.Bold, maxLines = 1)
+            if (!ep.stillUrl.isNullOrBlank()) NetImage(ep.stillUrl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Text(
+                "À venir · ${Fmt.isoDate(ep.airDate)}", color = Color(0xFFBFDBFE), fontSize = spx(13), fontWeight = FontWeight.SemiBold, maxLines = 1,
+                modifier = Modifier.align(Alignment.TopStart).padding(dpx(8)).clip(RoundedCornerShape(50))
+                    .background(Color(0xCC1E3A8A)).padding(horizontal = dpx(10), vertical = dpx(3)),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(dpx(4))) {
+            Text(episodeTitle(ep.number, ep.title), color = Tok.TextHi, fontSize = spx(22), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (ep.overview.isNotBlank()) Text(ep.overview, color = Tok.TextMid, fontSize = spx(17), lineHeight = spx(23), maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
     }
 }
