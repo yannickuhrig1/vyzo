@@ -2,7 +2,7 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from '@supaba
 import {
   BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, mergeGuide, nextUpdatedAt,
   parsePlayback, parseRule, parseUsage, recordingId, ruleJson, withCategoryLock,
-  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
+  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
   type ProfileActivity, type ProgressItem, type Recording, type RecordingStatus, type UserList,
 } from './model'
@@ -88,10 +88,11 @@ export interface Backend {
   /**
    * Nouveau mot de passe après « Mot de passe oublié ». Les autres sessions sont fermées : chaque appareil redemande le
    * mot de passe, et le premier qui a encore la clé du compte la protège avec le nouveau.
-   * « kept » : la clé, gardée dans ce navigateur, est déjà protégée par le nouveau mot de passe ; « pending » : un
-   * appareil doit s'en charger ; « none » : pas encore de données chiffrées.
+   * vault « kept » : la clé, gardée dans ce navigateur, est déjà protégée par le nouveau mot de passe ; « pending » :
+   * un appareil doit s'en charger ; « none » : pas encore de données chiffrées. othersSignedOut : false si la
+   * fermeture des autres sessions a échoué.
    */
-  resetPassword(account: Account, next: string): Promise<'kept' | 'pending' | 'none'>
+  resetPassword(account: Account, next: string): Promise<PasswordResetResult>
 
   profiles(): Promise<Profile[]>
   saveProfiles(profiles: Profile[]): Promise<void>
@@ -204,6 +205,8 @@ export function friendlyError(e: unknown): string {
   if (code === 'PGRST205' || /Could not find the table/i.test(raw)) return 'Le serveur Vyzo n’a pas encore cette fonction (mise à jour du serveur à faire)'
   return raw || 'Erreur inconnue'
 }
+
+export interface PasswordResetResult { vault: 'kept' | 'pending' | 'none'; othersSignedOut: boolean }
 
 /** Erreur à montrer telle quelle (pas un message technique). */
 export class UserError extends Error {}
@@ -435,39 +438,40 @@ export class SupabaseBackend implements Backend {
   }
 
   async verifyEmailLink(link: EmailLinkParams): Promise<{ type: EmailLinkType; account: Account }> {
-    if (link.mode === 'error') throw new UserError(link.message)
+    if (link.mode === 'error') throw new UserError(emailLinkError(link.code))
     // La clé ouverte dans la page est oubliée (le lien peut viser un autre compte). Celle gardée par « Rester
     // déverrouillé » reste : liée à un compte, elle permet de garder les données lisibles après « Mot de passe oublié ».
     this.vaultKey?.fill(0)
     this.vaultKey = null
     this.vaultUser = ''
-    const { data, error } = link.mode === 'token'
-      ? await this.db.auth.verifyOtp({
-        token_hash: link.tokenHash, type: link.type === 'signup' ? 'email' : link.type,
-      })
-      : await this.db.auth.setSession({ access_token: link.accessToken, refresh_token: link.refreshToken })
-    if (error) throw error
+    const { data, error } = await this.db.auth.verifyOtp({
+      token_hash: link.tokenHash, type: link.type === 'signup' ? 'email' : link.type,
+    })
+    if (error) throw new UserError(emailLinkError(error.code ?? ''))
     const user = data.user
     if (!user) throw new UserError('Lien invalide')
     return { type: link.type, account: { userId: user.id, email: user.email ?? '' } }
   }
 
-  async resetPassword(account: Account, next: string): Promise<'kept' | 'pending' | 'none'> {
+  async resetPassword(account: Account, next: string): Promise<PasswordResetResult> {
     const { error } = await this.db.auth.updateUser({ password: next })
     if (error) throw error
     void this.logEvent('password_changed', 'mot de passe oublié')
     // Quelqu'un d'autre a peut-être le mot de passe : les autres sessions se ferment. Les appareils gardent leur clé et
-    // la protègent avec le nouveau mot de passe dès qu'on s'y reconnecte (SealedSync.unlock).
-    await this.db.auth.signOut({ scope: 'others' }).catch(() => undefined)
+    // la protègent avec le nouveau mot de passe dès qu'on s'y reconnecte (SealedSync.unlock). Un échec est signalé :
+    // l'écran ne doit pas annoncer des appareils déconnectés qui ne le sont pas.
+    const out = await this.db.auth.signOut({ scope: 'others' }).catch((e: unknown) => ({ error: e }))
+    const othersSignedOut = !out.error
+    if (othersSignedOut) void this.logEvent('signout_others')
     const record = await this.vaultRecord().catch(() => null)
-    if (!record) return 'none'
+    if (!record) return { vault: 'none', othersSignedOut }
     // « Rester déverrouillé » coché plus tôt dans ce navigateur : la clé est là, le site la protège tout de suite.
     const kept = await recallKey(account.userId, record.keyId).catch(() => null)
-    if (!kept || kept.length !== 32 || await keyId(kept) !== record.keyId) return 'pending'
-    if (await this.writeVault(account, kept, next)) return 'pending'
+    if (!kept || kept.length !== 32 || await keyId(kept) !== record.keyId) return { vault: 'pending', othersSignedOut }
+    if (await this.writeVault(account, kept, next)) return { vault: 'pending', othersSignedOut }
     this.vaultKey = kept
     this.vaultUser = account.userId
-    return 'kept'
+    return { vault: 'kept', othersSignedOut }
   }
 
   async forgetRemembered(): Promise<void> {

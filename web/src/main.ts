@@ -3,7 +3,7 @@ import '@fontsource/instrument-serif/400.css'
 import '@fontsource-variable/jetbrains-mono'
 import './style.css'
 import {
-  SupabaseBackend, UserError, friendlyError,
+  SupabaseBackend, UserError, friendlyError, type PasswordResetResult,
   type Account, type Backend, type BackupData, type CastItem, type ListsData, type LiveMessage, type PlaybackAction, type PlaylistDraft, type Table,
   type VaultStatus,
 } from './backend'
@@ -538,7 +538,7 @@ function renderMailSent(address: string) {
 async function openEmailLink(link: EmailLinkParams) {
   authPage('Vérification', h('div', {}, h('h1', {}, 'Vérification du lien…'), h('p', { class: 'lead' }, 'Un instant.')))
   if (link.mode === 'error') {
-    renderForgot('', emailLinkError(link.code, link.message))
+    renderForgot('', emailLinkError(link.code))
     return
   }
   try {
@@ -548,10 +548,14 @@ async function openEmailLink(link: EmailLinkParams) {
       // Le site s'ouvre ensuite avec le mot de passe : c'est lui qui déverrouille les données chiffrées.
       await backend.signOut().catch(() => undefined)
       renderConfirmed(account.email)
-    } else renderEmailChanged(account)
+    } else {
+      // Pas d'ouverture automatique : le compte s'ouvre avec son mot de passe, comme après une inscription.
+      await backend.signOut().catch(() => undefined)
+      renderEmailChanged(account.email)
+    }
   } catch (e) {
-    const err = e as { code?: string; message?: string }
-    renderForgot('', emailLinkError(err?.code ?? '', err?.message ?? ''))
+    // verifyEmailLink ne lève que des messages fixes (UserError) ou des erreurs réseau.
+    renderForgot('', friendlyError(e))
   }
 }
 
@@ -567,12 +571,12 @@ function renderConfirmed(address: string) {
   go.focus()
 }
 
-function renderEmailChanged(account: Account) {
-  const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => void enter(account) }, 'Ouvrir mon compte')
+function renderEmailChanged(address: string) {
+  const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => renderLogin(undefined, address) }, 'Se connecter')
   authPage('Adresse modifiée', h('div', {},
     h('div', { class: 'auth-badge ok' }, icon('check', 22)),
     h('h1', {}, 'Adresse confirmée'),
-    h('p', { class: 'lead' }, `Le compte utilise maintenant ${account.email}. Si un e-mail est aussi arrivé sur l’autre adresse, ouvre son lien pour terminer.`),
+    h('p', { class: 'lead' }, `Le compte utilise maintenant ${address}. Si un e-mail est aussi arrivé sur l’autre adresse, ouvre son lien pour terminer.`),
     go,
   ))
   go.focus()
@@ -596,12 +600,12 @@ function renderNewPassword(account: Account) {
         pass2.focus()
         return
       }
-      let vault: 'kept' | 'pending' | 'none' = 'none'
+      let result: PasswordResetResult = { vault: 'none', othersSignedOut: true }
       const next = pass1.value
-      if (await busy(submit, error, async () => { vault = await backend.resetPassword(account, next) })) {
+      if (await busy(submit, error, async () => { result = await backend.resetPassword(account, next) })) {
         pass1.value = ''
         pass2.value = ''
-        renderPasswordReset(account, vault)
+        renderPasswordReset(account, result)
       }
     },
   },
@@ -617,7 +621,7 @@ function renderNewPassword(account: Account) {
   pass1.focus()
 }
 
-function renderPasswordReset(account: Account, vault: 'kept' | 'pending' | 'none') {
+function renderPasswordReset(account: Account, { vault, othersSignedOut }: PasswordResetResult) {
   const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => void enter(account) }, 'Ouvrir mon compte')
   const vaultText = vault === 'kept'
     ? 'Tes abonnements chiffrés restent lisibles : ce navigateur avait gardé la clé du compte, elle est maintenant protégée par le nouveau mot de passe.'
@@ -627,7 +631,9 @@ function renderPasswordReset(account: Account, vault: 'kept' | 'pending' | 'none
   authPage('Mot de passe changé', h('div', {},
     h('div', { class: 'auth-badge ok' }, icon('check', 22)),
     h('h1', {}, 'Mot de passe changé'),
-    h('p', { class: 'lead' }, 'Les autres appareils et navigateurs ont été déconnectés. Chacun te redemandera le nouveau mot de passe.'),
+    othersSignedOut
+      ? h('p', { class: 'lead' }, 'Les autres appareils et navigateurs ont été déconnectés. Chacun te redemandera le nouveau mot de passe.')
+      : h('p', { class: 'auth-warn' }, 'Les autres appareils et navigateurs n’ont pas pu être déconnectés. Une fois dans le compte, ouvre Sécurité et choisis « Déconnecter les autres appareils ».'),
     vaultText ? h('p', { class: vault === 'kept' ? 'form-note' : 'auth-warn' }, vaultText) : null,
     go,
   ))

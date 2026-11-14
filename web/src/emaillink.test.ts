@@ -18,18 +18,19 @@ describe('parseEmailLink', () => {
     expect(parseEmailLink('?token_hash=abc&type=autre', '')).toBeNull()
   })
 
-  it('session renvoyée par les modèles par défaut', () => {
+  it('session toute faite refusée', () => {
     expect(parseEmailLink('', '#access_token=a&refresh_token=r&type=recovery&expires_in=3600'))
-      .toEqual({ mode: 'session', type: 'recovery', accessToken: 'a', refreshToken: 'r' })
+      .toEqual({ mode: 'error', code: 'session_in_url' })
   })
 
-  it('erreur, dans la requête ou après #', () => {
-    const fromHash = parseEmailLink('', '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired')
-    expect(fromHash).toEqual({ mode: 'error', code: 'otp_expired', message: 'Email link is invalid or has expired' })
-    expect(parseEmailLink('?error=access_denied', '')).toMatchObject({ mode: 'error', code: 'access_denied' })
+  it('erreur, dans la requête ou après #, sans le texte venu de l’adresse', () => {
+    const fromHash = parseEmailLink('', '#error=access_denied&error_code=otp_expired&error_description=Appelle+le+0800')
+    expect(fromHash).toEqual({ mode: 'error', code: 'otp_expired' })
+    expect(parseEmailLink('?error=access_denied', '')).toEqual({ mode: 'error', code: 'access_denied' })
   })
 
-  it('message en français', () => {
-    expect(emailLinkError('otp_expired', '')).toMatch(/expiré/)
+  it('messages fixes en français', () => {
+    expect(emailLinkError('otp_expired')).toMatch(/expiré/)
+    expect(emailLinkError('nimporte quoi')).not.toMatch(/nimporte/)
   })
 })

@@ -594,41 +594,35 @@ export type EmailLinkType = 'signup' | 'recovery' | 'email_change'
 /** Ce qu'apporte l'adresse de la page quand on arrive depuis un e-mail du compte. */
 export type EmailLinkParams =
   | { mode: 'token'; type: EmailLinkType; tokenHash: string }
-  | { mode: 'session'; type: EmailLinkType; accessToken: string; refreshToken: string }
-  | { mode: 'error'; code: string; message: string }
+  | { mode: 'error'; code: string }
 
 const LINK_TYPES: Record<string, EmailLinkType> = {
   signup: 'signup', email: 'signup', invite: 'signup', magiclink: 'signup', recovery: 'recovery', email_change: 'email_change',
 }
 
 /**
- * Lit les paramètres d'un lien d'e-mail. Les modèles Vyzo envoient « ?token_hash=…&type=… » (vérifié par la page) ;
- * les modèles de Supabase par défaut renvoient la session ou l'erreur après « # ». null : visite ordinaire.
+ * Lit les paramètres d'un lien d'e-mail. Seuls les liens des modèles Vyzo, « ?token_hash=…&type=… », ouvrent quelque
+ * chose : ils sont vérifiés par le serveur. Une session toute faite après « # » (modèles de Supabase par défaut) est
+ * refusée, car n'importe quel site pourrait en fabriquer une pour ouvrir son propre compte ici. Le texte d'erreur venu
+ * de l'adresse n'est jamais affiché, seul son code compte. null : visite ordinaire.
  */
 export function parseEmailLink(search: string, hash: string): EmailLinkParams | null {
   const q = new URLSearchParams(search.replace(/^\?/, ''))
   const f = new URLSearchParams(hash.replace(/^#\/?/, ''))
   const error = q.get('error_code') ?? q.get('error') ?? f.get('error_code') ?? f.get('error')
-  if (error) {
-    const message = q.get('error_description') ?? f.get('error_description') ?? ''
-    return { mode: 'error', code: error, message }
-  }
+  if (error) return { mode: 'error', code: error }
+  if (f.has('access_token') || f.has('refresh_token')) return { mode: 'error', code: 'session_in_url' }
   const tokenHash = q.get('token_hash')
-  const qType = LINK_TYPES[q.get('type') ?? '']
-  if (tokenHash && qType) return { mode: 'token', type: qType, tokenHash }
-  const accessToken = f.get('access_token')
-  const refreshToken = f.get('refresh_token')
-  const fType = LINK_TYPES[f.get('type') ?? '']
-  if (accessToken && refreshToken && fType) return { mode: 'session', type: fType, accessToken, refreshToken }
+  const type = LINK_TYPES[q.get('type') ?? '']
+  if (tokenHash && type) return { mode: 'token', type, tokenHash }
   return null
 }
 
-/** Message à montrer pour un lien refusé. */
-export function emailLinkError(code: string, message: string): string {
-  if (code === 'otp_expired' || /expired|invalid/i.test(message))
-    return 'Ce lien a expiré ou a déjà servi. Demande un nouvel e-mail ci-dessous.'
-  if (code === 'access_denied') return 'Lien refusé par le serveur Vyzo. Demande un nouvel e-mail ci-dessous.'
-  return message || 'Lien invalide. Demande un nouvel e-mail ci-dessous.'
+/** Message fixe pour un lien refusé (le texte de l'adresse ou du serveur n'est pas repris). */
+export function emailLinkError(code: string): string {
+  if (code === 'otp_expired' || code === 'flow_state_expired') return 'Ce lien a expiré ou a déjà servi. Demande un nouvel e-mail ci-dessous.'
+  if (code === 'session_in_url') return 'Ce lien ne peut pas être utilisé ici. Demande un nouvel e-mail ci-dessous.'
+  return 'Lien invalide ou refusé par le serveur Vyzo. Demande un nouvel e-mail ci-dessous.'
 }
 
 /** Longueur minimale imposée par le serveur (Supabase Auth). */
