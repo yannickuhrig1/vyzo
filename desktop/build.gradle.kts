@@ -108,6 +108,9 @@ compose.desktop {
 
             linux {
                 packageName = "vyzo"
+                // « ~ » : pour dpkg, 1.13.0~beta4 passe avant 1.13.0 (avec « . », 1.13.0.beta4 passait après et la
+                // stable était refusée comme un retour en arrière).
+                packageVersion = appVersion.replace("-", "~")
                 debMaintainer = "254835393+yannickuhrig1@users.noreply.github.com"
                 menuGroup = "AudioVideo;Video;TV"
                 appCategory = "video"
