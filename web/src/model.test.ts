@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  API_KEY_DEFS,
   cleanAvatar, cleanName, hashPin, isOnline, isValidPin, moveProfile, moveUserList, needsUpdate, nextColor, nextUpdatedAt,
   PROFILE_PALETTE, profileColor, progressRatio, parseXtreamUrl, todayScreenTime, upcomingRecordingAlert, lastBackupAt,
   recordingGroup, statusLabel, updateInProgress, updatePending,
@@ -339,5 +340,19 @@ describe('1.13.0-beta3', () => {
     const csv = usageToCsv(rows, [p1, p2], [])
     expect(csv.startsWith('\uFEFF')).toBe(true)
     expect(csv).toContain("'=TF1 (30 min)")
+  })
+
+  it('documente chaque clé API avec étapes, lien externe et Redirect URI Trakt', () => {
+    expect(API_KEY_DEFS.map((k) => k.id)).toEqual(['tmdb', 'omdb', 'opensubtitles', 'trakt_id', 'trakt_secret', 'github'])
+    for (const def of API_KEY_DEFS) {
+      expect(def.help.steps.length).toBeGreaterThan(0)
+      expect(def.help.link.href).toMatch(/^https:\/\//)
+      expect(def.help.link.label.length).toBeGreaterThan(0)
+    }
+    const trakt = API_KEY_DEFS.filter((k) => k.id.startsWith('trakt_'))
+    expect(trakt).toHaveLength(2)
+    for (const def of trakt) {
+      expect(def.help.copy?.value).toBe('urn:ietf:wg:oauth:2.0:oob')
+    }
   })
 })

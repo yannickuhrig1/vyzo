@@ -86,6 +86,8 @@ const ICONS: Record<string, string[]> = {
   dots: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
   sliders: ['M4 7h9', 'M17 7h3', 'M4 12h3', 'M11 12h9', 'M4 17h11', 'M19 17h1', 'M13 5v4', 'M7 10v4', 'M15 15v4'],
   globe: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M3 12h18', 'M12 3a14 14 0 0 1 0 18', 'M12 3a14 14 0 0 0 0 18'],
+  copy: ['M9 9h10v10H9z', 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'],
+  external: ['M14 4h6v6', 'M10 14L20 4', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
 }
 
 export function icon(name: keyof typeof ICONS | string, size = 18): SVGSVGElement {

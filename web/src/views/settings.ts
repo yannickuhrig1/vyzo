@@ -1,9 +1,9 @@
 import { append, h, icon } from '../dom'
 import {
   API_KEY_DEFS, AUDIO_LANGUAGES, DEFAULT_SYNCED_SETTINGS, DEFAULT_USER_AGENT,
-  type ApiKeyDef, type SyncedSettings,
+  type ApiKeyDef, type ApiKeyHelp, type SyncedSettings,
 } from '../model'
-import { act, confirmDialog, emptyCard, loading, openDialog } from '../ui'
+import { act, confirmDialog, emptyCard, loading, openDialog, toast } from '../ui'
 import { backend, refresh, renderView, state } from '../context'
 import { errorBanner, pageHeader, panel, passwordWithReveal } from '../shared'
 import { vaultGate } from '../vault-ui'
@@ -60,9 +60,37 @@ function apiKeysPanel() {
     })))
   }
   return panel('Clés API personnelles',
-    'Stockées individuellement et chiffrées de bout en bout, synchronisées sur Android, Android TV et Vyzo PC.',
+    'Stockées individuellement et chiffrées de bout en bout, synchronisées sur Android, Android TV et Vyzo PC. Ouvre une ligne pour voir où obtenir la clé.',
     body,
     [icon('lock', 14), 'Seule la clé saisie quitte ce navigateur sous forme chiffrée. Retirer une clé l’efface sur tous tes appareils.'])
+}
+
+function apiKeyHelpBox(help: ApiKeyHelp) {
+  const copyRow = help.copy ? h('div', { class: 'key-copy' },
+    h('span', { class: 'key-copy-label' }, help.copy.label),
+    h('div', { class: 'key-copy-row' },
+      h('code', { class: 'mono key-copy-val' }, help.copy.value),
+      h('button', {
+        class: 'btn outline small', type: 'button',
+        onclick: async () => {
+          try {
+            await navigator.clipboard.writeText(help.copy!.value)
+            toast('Copié dans le presse-papiers')
+          } catch {
+            toast('Sélectionne et copie la valeur manuellement', 'error')
+          }
+        },
+      }, icon('copy', 13), 'Copier'))) : null
+
+  return h('div', { class: 'key-help' },
+    h('div', { class: 'key-help-head' }, icon('info', 14), h('span', {}, 'Où trouver cette information ?')),
+    h('ol', { class: 'key-steps' }, help.steps.map((step) => h('li', {}, step))),
+    copyRow,
+    help.note ? h('p', { class: 'key-note' }, help.note) : null,
+    h('a', {
+      class: 'btn outline small key-link', href: help.link.href,
+      target: '_blank', rel: 'noopener noreferrer',
+    }, icon('external', 13), help.link.label))
 }
 
 function apiKeyDialog(def: ApiKeyDef, current: string) {
@@ -103,12 +131,13 @@ function apiKeyDialog(def: ApiKeyDef, current: string) {
     h('div', { class: 'dialog-head' },
       h('span', { class: 'kind-badge big' }, icon('key', 20)),
       h('div', {}, h('h2', {}, def.label), h('p', { class: 'dialog-sub' }, def.hint))),
+    apiKeyHelpBox(def.help),
     h('label', { for: 'ak-value' }, 'Valeur de la clé'),
     def.secret ? passwordWithReveal(input) : input,
     error,
     h('div', { class: 'dialog-actions' }, removeBtn, h('span', { class: 'spacer' }),
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), save))
-  const dialog = openDialog(form)
+  const dialog = openDialog(form, 'wide')
   input.focus()
 }
 

@@ -874,22 +874,118 @@ export function moveEpgSource(list: EpgSource[], id: string, delta: -1 | 1): Epg
 
 // ------------------------------------------------------------------ Clés API personnelles (SealedKeys)
 
+export interface ApiKeyHelp {
+  steps: string[]
+  link: { label: string; href: string }
+  copy?: { label: string; value: string }
+  note?: string
+}
+
 export interface ApiKeyDef {
   id: string
   label: string
   hint: string
   placeholder: string
   secret?: boolean
+  help: ApiKeyHelp
 }
+
+const TRAKT_REDIRECT_URI = 'urn:ietf:wg:oauth:2.0:oob'
 
 /** Identifiants exacts de SealedKeys dans SealedSync.kt. */
 export const API_KEY_DEFS: ApiKeyDef[] = [
-  { id: 'tmdb', label: 'TheMovieDB (TMDB)', hint: 'Clé ou jeton v3 pour enrichir affiches, résumés, notes et bandes-annonces.', placeholder: 'Clé API TMDB', secret: true },
-  { id: 'omdb', label: 'OMDb API', hint: 'Ajoute les notes IMDb, Rotten Tomatoes et Metacritic sur les fiches.', placeholder: 'Clé OMDb', secret: true },
-  { id: 'opensubtitles', label: 'OpenSubtitles.com', hint: 'Augmente le quota de recherche et téléchargement de sous-titres.', placeholder: 'Clé OpenSubtitles', secret: true },
-  { id: 'trakt_id', label: 'Trakt · Client ID', hint: 'Identifiant d’application Trakt personnelle.', placeholder: 'Client ID Trakt', secret: false },
-  { id: 'trakt_secret', label: 'Trakt · Client Secret', hint: 'Clé secrète associée au Client ID Trakt.', placeholder: 'Client Secret Trakt', secret: true },
-  { id: 'github', label: 'GitHub Token', hint: 'Facultatif : uniquement si le dépôt de mises à jour est privé.', placeholder: 'ghp_…', secret: true },
+  {
+    id: 'tmdb',
+    label: 'TheMovieDB (TMDB)',
+    hint: 'Clé API v3 pour enrichir affiches, résumés, notes et bandes-annonces.',
+    placeholder: 'Clé API v3 (32 caractères)',
+    secret: true,
+    help: {
+      steps: [
+        'Connecte-toi sur themoviedb.org puis ouvre Paramètres → API (crée une clé « Developer » si besoin).',
+        'Copie la valeur du champ « Clé d’API » (v3 auth, 32 caractères).',
+      ],
+      note: 'Ne colle pas le long « Jeton d’accès en lecture » (Bearer) : Vyzo utilise la clé v3.',
+      link: { label: 'Ouvrir les réglages API sur TMDB', href: 'https://www.themoviedb.org/settings/api' },
+    },
+  },
+  {
+    id: 'omdb',
+    label: 'OMDb API',
+    hint: 'Ajoute les notes IMDb, Rotten Tomatoes et Metacritic sur les fiches.',
+    placeholder: 'Clé OMDb (ex. a1b2c3d4)',
+    secret: true,
+    help: {
+      steps: [
+        'Choisis l’offre gratuite « FREE! (1,000 daily limit) » et renseigne ton e-mail.',
+        'Valide le lien d’activation reçu par e-mail, puis copie la clé fournie.',
+      ],
+      link: { label: 'Demander une clé sur OMDb', href: 'https://www.omdbapi.com/apikey.aspx' },
+    },
+  },
+  {
+    id: 'opensubtitles',
+    label: 'OpenSubtitles.com',
+    hint: 'Augmente le quota de recherche et téléchargement de sous-titres.',
+    placeholder: 'Clé API OpenSubtitles',
+    secret: true,
+    help: {
+      steps: [
+        'Connecte-toi (ou crée un compte) sur opensubtitles.com (attention : pas .org).',
+        'Ouvre le menu de ton compte → API consumers → NEW CONSUMER, donne un nom (ex. Vyzo) et valide.',
+        'Copie la clé « API Key » générée.',
+      ],
+      note: 'Facultatif : sans clé, Vyzo bascule sur le mode public de secours avec un quota plus limité.',
+      link: { label: 'Ouvrir API consumers sur OpenSubtitles.com', href: 'https://www.opensubtitles.com/consumers' },
+    },
+  },
+  {
+    id: 'trakt_id',
+    label: 'Trakt · Client ID',
+    hint: 'Identifiant d’application Trakt personnelle.',
+    placeholder: 'Client ID Trakt',
+    secret: false,
+    help: {
+      steps: [
+        'Ouvre Trakt → Settings → Your API Apps → New Application et donne un nom (ex. Vyzo).',
+        `Dans « Redirect URI », saisis exactement : ${TRAKT_REDIRECT_URI}, puis clique sur Save App.`,
+        'Copie le champ « Client ID » affiché sur la fiche de l’application (puis renseigne aussi le Client Secret).',
+      ],
+      copy: { label: 'Redirect URI à coller sur Trakt', value: TRAKT_REDIRECT_URI },
+      note: 'La connexion au compte Trakt se finalise ensuite depuis l’application Vyzo via un code sur trakt.tv/activate.',
+      link: { label: 'Créer une application sur Trakt', href: 'https://trakt.tv/oauth/applications/new' },
+    },
+  },
+  {
+    id: 'trakt_secret',
+    label: 'Trakt · Client Secret',
+    hint: 'Clé secrète associée au Client ID Trakt.',
+    placeholder: 'Client Secret Trakt',
+    secret: true,
+    help: {
+      steps: [
+        `Ouvre la même application Trakt (créée avec Redirect URI = ${TRAKT_REDIRECT_URI}).`,
+        'Copie le champ « Client Secret » affiché juste en dessous du Client ID.',
+      ],
+      copy: { label: 'Redirect URI à coller sur Trakt', value: TRAKT_REDIRECT_URI },
+      link: { label: 'Voir tes applications sur Trakt', href: 'https://trakt.tv/oauth/applications' },
+    },
+  },
+  {
+    id: 'github',
+    label: 'GitHub Token',
+    hint: 'Facultatif : uniquement si le dépôt de mises à jour est privé.',
+    placeholder: 'ghp_…',
+    secret: true,
+    help: {
+      steps: [
+        'Inutile si le dépôt yannickuhrig1/vyzo est public : laisse ce champ vide.',
+        'Si le dépôt est privé, va sur GitHub → Settings → Developer settings → Personal access tokens.',
+        'Génère un jeton avec accès en lecture au dépôt (Contents: Read-only en Fine-grained, ou repo en classic).',
+      ],
+      link: { label: 'Créer un jeton sur GitHub', href: 'https://github.com/settings/tokens' },
+    },
+  },
 ]
 
 // ------------------------------------------------------------------ Réglages synchronisés (SealedSettings)
