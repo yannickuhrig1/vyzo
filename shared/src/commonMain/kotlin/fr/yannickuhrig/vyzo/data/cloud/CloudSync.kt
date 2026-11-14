@@ -79,6 +79,25 @@ data class CloudData(
     val updateHandledAt: Long = 0,
     /** Titres chiffrés déjà envoyés pour la progression et les listes antérieures (compte [metaUserId]). */
     val metaUserId: String = "",
+    /** Temps passé devant Vyzo sur cet appareil, par profil et par jour (voir [fr.yannickuhrig.vyzo.remote.UsageTracker]). */
+    val usage: List<UsageDay> = emptyList(),
+    /** Règles de temps d'écran posées depuis le site, par profil : bloc reçu tel quel (voir [SealedSync]). */
+    val screenTime: Map<String, String> = emptyMap(),
+    /** Temps du jour vu sur les autres appareils, par « profil|appareil|jour ». */
+    val remoteUsage: Map<String, Long> = emptyMap(),
+)
+
+/** Temps passé devant Vyzo un jour donné, pour un profil, sur cet appareil. [items] : titre → millisecondes. */
+@Serializable
+data class UsageDay(
+    val profile: String,
+    val day: String,
+    val totalMs: Long = 0,
+    val liveMs: Long = 0,
+    val movieMs: Long = 0,
+    val episodeMs: Long = 0,
+    val otherMs: Long = 0,
+    val items: Map<String, Long> = emptyMap(),
 )
 
 /** [file] doit se terminer par ".preferences_pb" (Android : filesDir/datastore/cloud.preferences_pb). */
@@ -158,6 +177,9 @@ class CloudSync(
     /** Événements Cast reçus en temps réel depuis un autre appareil. */
     val incomingCastCommands = kotlinx.coroutines.flow.MutableSharedFlow<CastCommand>(extraBufferCapacity = 8)
 
+    /** Autres messages du canal du compte (commandes du site, réponses des appareils) : type, contenu à plat. */
+    val incomingBroadcasts = MutableSharedFlow<Pair<String, JsonObject>>(extraBufferCapacity = 32)
+
     /** Événements de purge d'historique reçus en temps réel depuis un autre appareil. */
     val incomingHistoryClear = kotlinx.coroutines.flow.MutableSharedFlow<HistoryClearEvent>(extraBufferCapacity = 8)
 
@@ -214,6 +236,7 @@ class CloudSync(
                 onHistoryRemove = { profileId, keys ->
                     scope.launch { runCatching { repo.removeProgress(profileId, keys) }.onFailure { Log.w(TAG, "retrait d'historique", it) } }
                 },
+                onBroadcast = { type, body -> incomingBroadcasts.tryEmit(type to body) },
             )
         } else {
             null
@@ -390,6 +413,32 @@ class CloudSync(
         _status.value = CloudStatus(configured = api.configured)
         if (s != null) runCatching { api.signOut(s.accessToken) }
     }
+
+    /** Diffuse un message à plat sur le canal du compte (réponse au site, état de lecture…). */
+    fun broadcast(type: String, body: JsonObject): Boolean = realtime?.broadcast(type, body) ?: false
+
+    /** Envoi rapide de ce qui a changé ici (état des abonnements vérifié à la demande du site, par exemple). */
+    fun requestPush() {
+        pushRequests.tryEmit(Unit)
+    }
+
+    /**
+     * Contenu d'un message temps réel chiffré avec la clé du compte, lié à son type : le serveur relaie sans pouvoir lire
+     * (titre en cours de lecture, message envoyé à la TV, recherche dans le guide). Null sans clé.
+     */
+    suspend fun sealLive(type: String, plain: String): String? {
+        val session = store.get().session ?: return null
+        val key = vaultKey(session) ?: return null
+        return VaultCrypto.seal(key, plain.toByteArray(), liveContext(session, type))
+    }
+
+    suspend fun openLive(type: String, box: String): String? {
+        val session = store.get().session ?: return null
+        val key = vaultKey(session) ?: return null
+        return runCatching { VaultCrypto.open(key, box, liveContext(session, type)).decodeToString() }.getOrNull()
+    }
+
+    private fun liveContext(session: CloudSession, type: String) = "vyzo|${session.userId}|live|$type"
 
     /** Diffuse une commande Cast (lecture distante) aux autres appareils du compte. */
     fun sendCastCommand(command: CastCommand): Boolean {

@@ -4,7 +4,8 @@ import '@fontsource-variable/jetbrains-mono'
 import './style.css'
 import {
   SupabaseBackend, UserError, friendlyError,
-  type Account, type Backend, type CastItem, type ListsData, type PlaylistDraft, type Table, type VaultStatus,
+  type Account, type Backend, type BackupData, type CastItem, type ListsData, type LiveMessage, type PlaybackAction, type PlaylistDraft, type Table,
+  type VaultStatus,
 } from './backend'
 import { DemoBackend } from './demo'
 import { append, clear, h, icon } from './dom'
@@ -12,6 +13,9 @@ import {
   FAVORITES_LIST_ID, PROFILE_PALETTE, MAX_PROFILE_NAME, castItemType, castReadiness, categoryLocked, cleanName, hashParental,
   hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, progressRatio, recordingGroup, sortProfiles, sortRecordings,
   statusLabel, subscriptionState, updateInProgress, updatePending,
+  EMPTY_RULE, MAX_DEVICE_LABEL, MAX_MESSAGE, SENSITIVE_EVENTS, checkRule, deviceName, eventText, livePosition, minutesLabel, recordingId,
+  ruleSummary, summarizeUsage, supportsRemote,
+  type AccountEvent, type BackupCounts, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Parental, type SealedPrefs, type Tone, type Device, type LatestVersion, type ListItem, type Playlist, type Profile, type ProfileActivity,
   type ProgressItem, type Recording, type RecordingGroup, type UserList,
 } from './model'
@@ -39,7 +43,8 @@ applyTheme(savedTheme())
 const demoRequested = import.meta.env.DEV && new URLSearchParams(location.search).has('demo')
 const backend: Backend = demoRequested ? new DemoBackend() : new SupabaseBackend()
 
-type Route = 'accueil' | 'appareils' | 'abonnements' | 'enregistrements' | 'profils' | 'historique' | 'listes' | 'parental' | 'securite'
+type Route = 'accueil' | 'appareils' | 'abonnements' | 'enregistrements' | 'profils' | 'historique' | 'listes' | 'statistiques' | 'parental'
+  | 'securite' | 'journal'
 
 interface Page { id: Route; label: string; icon: string; group: string | null; lead: string | null }
 
@@ -51,13 +56,16 @@ const PAGES: Page[] = [
   { id: 'profils', label: 'Profils', icon: 'users', group: 'Profils', lead: 'Les profils « Qui regarde ? » de la maison.' },
   { id: 'historique', label: 'Historique', icon: 'history', group: 'Profils', lead: 'Ce que chaque profil a commencé.' },
   { id: 'listes', label: 'Listes', icon: 'list', group: 'Profils', lead: 'Favoris et listes de chaque profil.' },
-  { id: 'parental', label: 'Contrôle parental', icon: 'lock', group: 'Profils', lead: 'Un code et des catégories verrouillées pour toute la maison.' },
-  { id: 'securite', label: 'Sécurité', icon: 'shield', group: 'Compte', lead: 'Mot de passe, sessions et clé de chiffrement.' },
+  { id: 'statistiques', label: 'Statistiques', icon: 'chart', group: 'Profils', lead: 'Le temps passé devant Vyzo, profil par profil.' },
+  { id: 'parental', label: 'Contrôle parental', icon: 'lock', group: 'Profils', lead: 'Code, catégories verrouillées et temps d’écran pour toute la maison.' },
+  { id: 'securite', label: 'Sécurité', icon: 'shield', group: 'Compte', lead: 'Mot de passe, sessions, sauvegarde et clé de chiffrement.' },
+  { id: 'journal', label: 'Journal', icon: 'journal', group: 'Compte', lead: 'Ce qui s’est passé sur le compte ces six derniers mois.' },
 ]
 const page = (id: Route) => PAGES.find((p) => p.id === id)!
 
 /** Données chargées séparément : une erreur sur l'une (table absente du serveur…) n'empêche pas d'afficher les autres. */
 type DataKey = 'profiles' | 'activity' | 'recordings' | 'devices' | 'playlists' | 'progress' | 'lists' | 'parental' | 'catalog'
+  | 'screentime' | 'usage' | 'events'
 
 interface State {
   account: Account | null
@@ -79,12 +87,19 @@ interface State {
   /** Abonnement choisi dans Contrôle parental, et ses catégories. */
   catalogFor: string | null
   catalog: { playlistId: string; entries: CatalogEntry[]; prefs: SealedPrefs } | null
+  /** Ce que lit chaque appareil connecté (messages « playback_state »). */
+  playback: Map<string, PlaybackState>
+  /** Règles de temps d'écran par profil (chiffrées). */
+  screentime: Map<string, ScreenTimeRule> | null
+  usage: UsageDay[] | null
+  events: AccountEvent[] | null
   errors: Partial<Record<DataKey, string>>
 }
 
 const emptyState = (): State => ({
   account: null, vault: null, remembered: false, profiles: null, activity: null, recordings: null, devices: null, latest: null,
-  playlists: null, selected: null, progress: null, lists: null, parental: undefined, catalogFor: null, catalog: null, errors: {},
+  playlists: null, selected: null, progress: null, lists: null, parental: undefined, catalogFor: null, catalog: null,
+  playback: new Map(), screentime: null, usage: null, events: null, errors: {},
 })
 
 let state: State = emptyState()
@@ -141,6 +156,15 @@ const LOADERS: Record<DataKey, () => Promise<void>> = {
   async parental() {
     if (state.vault === 'open') state.parental = await backend.parental(state.account!)
   },
+  async screentime() {
+    if (state.vault === 'open') state.screentime = await backend.screenTime(state.account!)
+  },
+  async usage() {
+    if (state.vault === 'open') state.usage = await backend.usage(state.account!)
+  },
+  async events() {
+    state.events = await backend.events()
+  },
   async catalog() {
     const id = state.catalogFor ?? state.playlists?.[0]?.id ?? null
     if (state.vault !== 'open' || !id) return
@@ -171,14 +195,17 @@ async function refresh(keys: Iterable<DataKey>) {
 
 /** Ce qu'il faut recharger quand une table change ailleurs. */
 function keysFor(table: Table): DataKey[] {
-  const loaded = (k: DataKey): DataKey[] => (state[k as 'progress' | 'lists' | 'catalog'] ? [k] : [])
+  const loaded = (k: DataKey): DataKey[] => (state[k as 'progress' | 'lists' | 'catalog' | 'screentime' | 'usage' | 'events'] ? [k] : [])
+  // Le journal n'est pas diffusé en temps réel : il se relit quand une table qui l'alimente change.
+  const events = loaded('events')
   switch (table) {
-    case 'profiles': return ['profiles', 'activity']
+    case 'profiles': return ['profiles', 'activity', ...events]
     case 'watch_progress': return ['activity', ...loaded('progress')]
     case 'list_items': case 'user_lists': return ['activity', ...loaded('lists')]
-    case 'recordings': return ['recordings']
-    case 'devices': return ['devices']
-    case 'sealed_items': return ['playlists', ...(state.parental !== undefined ? ['parental' as const] : []), ...loaded('catalog')]
+    case 'recordings': return ['recordings', ...events]
+    case 'devices': return ['devices', ...events]
+    case 'sealed_items': return ['playlists', ...(state.parental !== undefined ? ['parental' as const] : []), ...loaded('catalog'),
+      ...loaded('screentime'), ...loaded('usage'), ...events]
   }
 }
 
@@ -202,7 +229,11 @@ function ensureRouteData() {
   if (r === 'parental' && state.vault === 'open') {
     if (state.parental === undefined) void refresh(['parental'])
     if (!state.catalog && state.playlists?.length) void refresh(['catalog'])
+    if (!state.screentime) void refresh(['screentime'])
   }
+  if (r === 'statistiques' && state.vault === 'open' && !state.usage) void refresh(['usage'])
+  if (r === 'journal') void refresh(['events'])
+  if (r === 'appareils' || r === 'accueil') askPlayback()
   if (!state.selected) return
   if ((r === 'historique' || r === 'accueil') && state.progress?.profileId !== state.selected) void refresh(['progress'])
   if (r === 'listes' && state.lists?.profileId !== state.selected) void refresh(['lists'])
@@ -211,11 +242,70 @@ function ensureRouteData() {
 async function enter(account: Account) {
   state = { ...emptyState(), account }
   stopWatching?.()
-  stopWatching = backend.watch(account, onRemoteChange)
+  const stopRemote = backend.watch(account, onRemoteChange)
+  const stopLive = backend.onLive(onLive)
+  stopWatching = () => { stopRemote(); stopLive() }
   renderShell()
   await refresh(['profiles', 'activity', 'recordings', 'devices', 'playlists'])
   ensureRouteData()
 }
+
+// ------------------------------------------------------------------ Réponses des appareils
+
+/** Demandes en attente d'un accusé de l'appareil (message, vérification) : identifiant → suite. */
+const awaiting = new Map<string, { device: Device; timer: number; onAck: (action: string) => void }>()
+
+function expectAck(req: string, device: Device, onAck: (action: string) => void, silent: string) {
+  const timer = window.setTimeout(() => {
+    awaiting.delete(req)
+    toast(silent, 'error')
+  }, 8000)
+  awaiting.set(req, { device, timer, onAck })
+}
+
+let playbackRender: number | undefined
+
+function onLive(m: LiveMessage) {
+  if (m.type === 'device_ack') {
+    const w = awaiting.get(m.req)
+    if (!w) return
+    window.clearTimeout(w.timer)
+    // Une vérification envoie deux accusés : « check » (reçue) puis « check_done ».
+    if (m.action !== 'check') awaiting.delete(m.req)
+    else w.timer = window.setTimeout(() => awaiting.delete(m.req), 60_000)
+    w.onAck(m.action)
+    return
+  }
+  if (m.type === 'playback_state' && state.account) {
+    void backend.openPlayback(state.account, m.box).then((p) => {
+      if (!p || !m.device) return
+      state.playback.set(m.device, p)
+      const r = route()
+      if (r !== 'appareils' && r !== 'accueil') return
+      // Plusieurs appareils répondent presque en même temps : un seul nouveau rendu.
+      window.clearTimeout(playbackRender)
+      playbackRender = window.setTimeout(renderView, 250)
+    })
+  }
+}
+
+let lastPlaybackAsk = 0
+
+/** Demande aux appareils connectés ce qu'ils lisent (au plus toutes les 20 s). */
+function askPlayback(force = false) {
+  if (!state.account || state.vault !== 'open') return
+  if (!force && Date.now() - lastPlaybackAsk < 20_000) return
+  lastPlaybackAsk = Date.now()
+  void backend.queryPlayback(state.account).catch(() => undefined)
+}
+
+// Lecture en cours : la position avance à l'écran, et les appareils sont réinterrogés de temps en temps.
+setInterval(() => {
+  const r = route()
+  if (!state.account || (r !== 'appareils' && r !== 'accueil')) return
+  askPlayback()
+  if ([...state.playback.values()].some((p) => p.state === 'playing') && !document.querySelector('dialog[open]')) renderView()
+}, 30_000)
 
 // Une mise à jour demandée : on suit sa progression même si le temps réel n'arrive pas.
 setInterval(() => {
@@ -428,6 +518,8 @@ function renderWho() {
 }
 
 const VIEWS: Record<Route, () => HTMLElement> = {
+  statistiques: statsView,
+  journal: journalView,
   accueil: homeView,
   appareils: devicesView,
   abonnements: playlistsView,
@@ -686,8 +778,8 @@ function homeView() {
         h('span', { class: 'kind-badge' }, icon(DEVICE_ICON[d.kind] ?? 'devices', 16),
           h('span', { class: `presence ${on ? 'on' : ''}` })),
         h('div', { class: 'row-main' },
-          h('div', { class: 'row-title' }, d.name || d.model || 'Appareil'),
-          h('div', { class: 'row-sub' }, on ? h('span', { class: 'online' }, 'En ligne') : `Vu ${relative(d.lastSeenAt)}`)),
+          h('div', { class: 'row-title' }, deviceName(d)),
+          h('div', { class: 'row-sub' }, on ? playingLine(d) ?? h('span', { class: 'online' }, 'En ligne') : `Vu ${relative(d.lastSeenAt)}`)),
         needsUpdate(d, state.latest) ? h('span', { class: 'pill planned' }, 'Mise à jour') : null)
     }))])
   }
@@ -737,8 +829,13 @@ function commands(): Command[] {
     ...THEMES.map((t) => ({ group: 'Actions', label: `Thème ${t.label}`, hint: t.hint, icon: 'sparkle', terms: 'apparence couleur', run: () => setTheme(t.id) })),
     { group: 'Actions', label: 'Se déconnecter', icon: 'logout', run: () => void signOut() },
   )
+  list.push(
+    { group: 'Actions', label: 'Programmer un enregistrement', icon: 'record', terms: 'guide tv programme enregistrer', run: () => { go('enregistrements'); guideDialog() } },
+    ...(open ? [{ group: 'Actions', label: 'Télécharger une sauvegarde du compte', icon: 'download', terms: 'export backup', run: () => { go('securite'); backupDialog() } }] : []),
+    ...(installPrompt ? [{ group: 'Actions', label: 'Installer le site', icon: 'install', terms: 'application bureau pwa', run: () => void install() }] : []),
+  )
   for (const d of state.devices ?? []) {
-    list.push({ group: 'Appareils', label: d.name || d.model || 'Appareil', hint: isOnline(d) ? 'En ligne' : `Vu ${relative(d.lastSeenAt)}`,
+    list.push({ group: 'Appareils', label: deviceName(d), hint: isOnline(d) ? 'En ligne' : `Vu ${relative(d.lastSeenAt)}`,
       icon: DEVICE_ICON[d.kind] ?? 'devices', terms: `${d.model} ${d.system} ${d.appVersion}`, run: () => go('appareils') })
   }
   for (const p of state.playlists ?? []) {
@@ -1053,7 +1150,7 @@ function deviceRow(d: Device, latest: LatestVersion | null, now: number) {
   const online = isOnline(d, now)
   const outdated = needsUpdate(d, latest)
   const waiting = updateInProgress(d, now)
-  const label = d.name || d.model || 'Appareil'
+  const label = deviceName(d)
 
   const versionPill = !d.appVersion ? null
     : outdated ? h('span', { class: 'pill planned mono', title: `Version installée ${d.appVersion}` }, `${d.appVersion} → ${latest!.versionName}`)
@@ -1084,6 +1181,21 @@ function deviceRow(d: Device, latest: LatestVersion | null, now: number) {
     class: 'icon-btn', type: 'button', title: 'Retirer de la liste', 'aria-label': `Retirer ${label} de la liste`,
     onclick: () => softDelete(`d:${d.id}`, `« ${label} » retiré de la liste`, () => backend.removeDevice(d), ['devices']),
   }, icon('trash', 15))
+  const remote = supportsRemote(d)
+  const later = 'Avec Vyzo 1.13.0-beta3 et plus sur cet appareil'
+  const rename = h('button', {
+    class: 'icon-btn', type: 'button', title: 'Renommer', 'aria-label': `Renommer ${label}`, onclick: () => renameDialog(d),
+  }, icon('edit', 15))
+  const message = h('button', {
+    class: 'icon-btn', type: 'button', disabled: !remote || !online, 'aria-label': `Envoyer un message à ${label}`,
+    title: !remote ? later : online ? 'Afficher un message à l’écran' : 'Vyzo doit être ouvert sur l’appareil',
+    onclick: () => messageDialog(d),
+  }, icon('message', 15))
+  const check: HTMLButtonElement = h('button', {
+    class: 'icon-btn', type: 'button', disabled: !remote || !online, 'aria-label': `Vérifier les abonnements depuis ${label}`,
+    title: !remote ? later : online ? 'Vérifier maintenant l’état des abonnements' : 'Vyzo doit être ouvert sur l’appareil',
+    onclick: () => void checkNow(d, check),
+  }, icon('pulse', 15))
 
   const details = [d.model && d.model !== d.name ? d.model : null, d.system || null].filter(Boolean).join(' · ')
   return h('li', { class: 'row-card device' },
@@ -1094,9 +1206,130 @@ function deviceRow(d: Device, latest: LatestVersion | null, now: number) {
       h('div', { class: 'row-sub wrap' },
         h('span', { class: online ? 'online' : '' }, online ? 'En ligne' : `Vu ${relative(d.lastSeenAt)}`),
         details ? h('span', { class: 'faint' }, `· ${details}`) : null),
-      status),
-    h('div', { class: 'row-actions' }, update, remove),
+      status,
+      online ? nowPlaying(d) : null),
+    h('div', { class: 'row-actions' }, update, rename, message, check, remove),
   )
+}
+
+/** « ▶ Dune · Yannick » : ce que l'appareil lit, pour les listes courtes. */
+function playingLine(d: Device): HTMLElement | null {
+  const p = state.playback.get(d.id)
+  if (!p || p.state === 'idle' || !p.title) return null
+  return h('span', { class: 'playing-line' }, icon(p.state === 'playing' ? 'play' : 'pause', 11),
+    h('span', {}, p.title), p.profile ? h('span', { class: 'faint' }, ` · ${p.profile}`) : null)
+}
+
+function nowPlaying(d: Device): HTMLElement | null {
+  const p = state.playback.get(d.id)
+  if (!p || p.state === 'idle' || !p.title) return null
+  const account = state.account!
+  const pos = livePosition(p)
+  const control = (action: PlaybackAction, iconName: string, text: string) => {
+    const b: HTMLButtonElement = h('button', {
+      class: 'btn ghost small', type: 'button',
+      onclick: () => void act(b, () => backend.controlPlayback(account, d, action)),
+    }, icon(iconName, 13), text)
+    return b
+  }
+  const timing = p.durationMs > 0
+    ? h('span', { class: 'mono faint' }, `${clock(pos)} / ${clock(p.durationMs)}`)
+    : h('span', { class: 'pill live' }, p.kind === 'live' ? 'Direct' : 'En cours')
+  return h('div', { class: 'now-playing' },
+    h('div', { class: 'np-head' },
+      h('span', { class: `np-dot ${p.state}` }),
+      h('div', { class: 'np-text' },
+        h('div', { class: 'np-title' }, p.title),
+        h('div', { class: 'np-sub' }, [p.detail, p.profile ? `Profil ${p.profile}` : '', p.state === 'paused' ? 'En pause' : ''].filter(Boolean).join(' · '))),
+      timing),
+    p.durationMs > 0 ? h('div', { class: 'bar np-bar' }, barFill(pos / p.durationMs)) : null,
+    h('div', { class: 'np-actions' },
+      p.state === 'playing' ? control('pause', 'pause', 'Pause') : control('resume', 'play', 'Reprendre'),
+      control('stop', 'stop', 'Arrêter')))
+}
+
+/** 1:05:09 ou 12:40. */
+function clock(ms: number): string {
+  const t = Math.max(0, Math.floor(ms / 1000))
+  const hh = Math.floor(t / 3600)
+  const mm = Math.floor((t % 3600) / 60)
+  const ss = t % 60
+  const two = (n: number) => String(n).padStart(2, '0')
+  return hh ? `${hh}:${two(mm)}:${two(ss)}` : `${mm}:${two(ss)}`
+}
+
+function renameDialog(d: Device) {
+  const input = h('input', { id: 'dev-label', maxlength: MAX_DEVICE_LABEL, value: d.label, placeholder: d.name || 'Nom de l’appareil', autocomplete: 'off' })
+  const save: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, 'Enregistrer')
+  const form = h('form', {
+    onsubmit: async (e: Event) => {
+      e.preventDefault()
+      if (await act(save, () => backend.renameDevice(d, input.value), input.value.trim() ? 'Appareil renommé' : 'Nom d’origine rétabli')) {
+        dialog.close()
+        await refresh(['devices'])
+      }
+    },
+  },
+    h('h2', {}, 'Renommer l’appareil'),
+    h('label', { for: 'dev-label' }, 'Nom affiché sur le site'), input,
+    h('p', { class: 'fine' }, `Nom donné par le système : ${d.name || 'inconnu'}. Laisse vide pour le reprendre.`),
+    h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), save))
+  const dialog = openDialog(form, 'small')
+  input.focus()
+  input.select()
+}
+
+const SIGNATURE_KEY = 'vyzo-message-from'
+
+function messageDialog(d: Device) {
+  const account = state.account!
+  const name = deviceName(d)
+  let saved = ''
+  try { saved = localStorage.getItem(SIGNATURE_KEY) ?? '' } catch { /* stockage indisponible */ }
+  const text = h('textarea', { id: 'msg-text', maxlength: MAX_MESSAGE, rows: 4, required: true, placeholder: 'À table dans 10 minutes !' })
+  const from = h('input', { id: 'msg-from', maxlength: 60, value: saved, placeholder: 'Papa', autocomplete: 'off' })
+  const count = h('span', { class: 'fine count' }, `0 / ${MAX_MESSAGE}`)
+  text.addEventListener('input', () => { count.textContent = `${text.value.length} / ${MAX_MESSAGE}` })
+  const send: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, icon('message', 14), 'Envoyer')
+  const form = h('form', {
+    onsubmit: async (e: Event) => {
+      e.preventDefault()
+      if (!text.value.trim()) return
+      try { localStorage.setItem(SIGNATURE_KEY, from.value.trim()) } catch { /* stockage indisponible */ }
+      let req = ''
+      if (await act(send, async () => { req = await backend.sendMessage(account, d, text.value, from.value) })) {
+        dialog.close()
+        expectAck(req, d, () => toast(`Message affiché sur « ${name} »`), `« ${name} » n’a pas répondu : Vyzo doit être ouvert à l’écran`)
+      }
+    },
+  },
+    h('div', { class: 'dialog-head' }, h('span', { class: 'kind-badge big' }, icon('message', 20)),
+      h('div', {}, h('h2', {}, 'Message à l’écran'), h('p', { class: 'dialog-sub' }, name))),
+    h('label', { for: 'msg-text' }, 'Message'), text, count,
+    h('label', { for: 'msg-from' }, 'Signé (facultatif)'), from,
+    h('p', { class: 'fine' }, 'Il s’affiche par-dessus ce qui est à l’écran, jusqu’à ce qu’on appuie sur OK. Chiffré de bout en bout.'),
+    h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), send))
+  const dialog = openDialog(form, 'small')
+  text.focus()
+}
+
+async function checkNow(d: Device, button: HTMLButtonElement) {
+  const name = deviceName(d)
+  let req = ''
+  if (!await act(button, async () => { req = await backend.checkNow(state.account!, d) })) return
+  button.disabled = true
+  expectAck(req, d, (action) => {
+    if (action === 'check') toast(`« ${name} » interroge les fournisseurs…`)
+    else {
+      button.disabled = false
+      toast('Vérification terminée : l’état des abonnements arrive dans quelques secondes')
+      // L'appareil renvoie l'état chiffré après un court délai (envoi groupé) : la page se met à jour d'elle-même.
+      window.setTimeout(() => void refresh(['playlists']), 12_000)
+    }
+  }, `« ${name} » n’a pas répondu : Vyzo doit être ouvert à l’écran`)
+  window.setTimeout(() => { button.disabled = false }, 8000)
 }
 
 // ------------------------------------------------------------------ Abonnements IPTV
@@ -1457,12 +1690,16 @@ const GROUPS: { id: RecordingGroup; title: string; icon: string }[] = [
 ]
 
 function recordingsView() {
-  const box = h('section', {}, pageHeader('enregistrements'), errorBanner('recordings'))
+  const schedule = state.vault === 'open'
+    ? h('button', { class: 'btn primary', type: 'button', onclick: () => guideDialog() }, icon('plus', 16), 'Programmer')
+    : null
+  const box = h('section', {}, pageHeader('enregistrements', schedule), errorBanner('recordings'))
   const recordings = state.recordings?.filter((r) => !isHidden(`r:${r.id}`)) ?? null
   if (!recordings) return append(box, [state.errors.recordings ? null : loading()]), box
   if (recordings.length === 0) {
     append(box, [emptyCard('record', 'Aucun enregistrement',
-      'Dans le guide TV de Vyzo, sur la TV, le téléphone ou le PC, choisis un programme puis « Enregistrer ». Il apparaîtra ici.')])
+      'Cherche un programme avec « Programmer », ou choisis-le dans le guide TV de Vyzo puis « Enregistrer ». Il apparaîtra ici.',
+      schedule ? h('button', { class: 'btn primary', type: 'button', onclick: () => guideDialog() }, icon('search', 15), 'Chercher dans le guide') : null)])
     return box
   }
   const now = Date.now()
@@ -1528,6 +1765,88 @@ function recordingRow(r: Recording, now: number) {
 
 // ------------------------------------------------------------------ Lancer sur un appareil
 
+/** Recherche dans le guide des appareils connectés, puis programmation (table recordings, comme depuis l'appli). */
+function guideDialog() {
+  if (state.vault !== 'open') return unlockDialog()
+  const account = state.account!
+  const input = h('input', { id: 'guide-q', type: 'search', placeholder: 'Titre ou chaîne : journal, Ligue 1, Arte…', autocomplete: 'off', minlength: 2, maxlength: 80 })
+  const go_: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, icon('search', 15), 'Chercher')
+  const results = h('div', { class: 'guide-results' })
+  const hasPc = (state.devices ?? []).some((d) => d.kind === 'pc')
+  const programmed = () => new Set((state.recordings ?? []).filter((r) => r.status === 'SCHEDULED' || r.status === 'RECORDING').map((r) => r.id))
+
+  const show = (items: GuideResult[]) => {
+    clear(results)
+    if (items.length === 0) {
+      append(results, [h('p', { class: 'empty' }, 'Aucun programme à venir ne correspond.')])
+      return
+    }
+    const already = programmed()
+    let day = ''
+    const list = h('ul', { class: 'rows' })
+    for (const g of items) {
+      const label = dayLabel(g.start)
+      if (label !== day) {
+        day = label
+        list.appendChild(h('li', { class: 'guide-day' }, label))
+      }
+      const id = recordingId(g)
+      const live = g.start <= Date.now()
+      const add: HTMLButtonElement = h('button', {
+        class: `btn ${already.has(id) ? 'ghost' : 'primary'} small`, type: 'button', disabled: already.has(id),
+        onclick: async () => {
+          if (await act(add, () => backend.scheduleRecording(g), `Programmé : ${g.title}`)) {
+            add.disabled = true
+            add.className = 'btn ghost small'
+            clear(add)
+            append(add, [icon('check', 13), 'Programmé'])
+            void refresh(['recordings'])
+          }
+        },
+      }, already.has(id) ? icon('check', 13) : icon('record', 13), already.has(id) ? 'Programmé' : 'Enregistrer')
+      list.appendChild(h('li', { class: 'row-card compact' },
+        h('div', { class: 'guide-time mono' }, timeFmt.format(g.start), h('small', {}, timeFmt.format(g.stop))),
+        h('div', { class: 'row-main' },
+          h('div', { class: 'row-title' }, g.title || 'Programme sans titre', live ? h('span', { class: 'pill live' }, 'En cours') : null),
+          h('div', { class: 'row-sub' }, g.channel || 'Chaîne', g.desc ? h('span', { class: 'faint' }, ` · ${g.desc}`) : null)),
+        add))
+    }
+    append(results, [list])
+  }
+
+  const form = h('form', {
+    class: 'guide-search',
+    onsubmit: async (e: Event) => {
+      e.preventDefault()
+      const q = input.value.trim()
+      if (q.length < 2) return input.focus()
+      clear(results)
+      append(results, [h('p', { class: 'searching' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Recherche dans le guide de tes appareils…')])
+      go_.disabled = true
+      try {
+        show(await backend.searchGuide(account, q))
+      } catch (err) {
+        clear(results)
+        append(results, [h('p', { class: 'form-error' }, err instanceof UserError ? err.message : friendlyError(err))])
+      } finally {
+        go_.disabled = false
+      }
+    },
+  }, input, go_)
+
+  const dialog = openDialog(h('div', {},
+    h('div', { class: 'dialog-head' }, h('span', { class: 'kind-badge big' }, icon('record', 20)),
+      h('div', {}, h('h2', {}, 'Programmer un enregistrement'),
+        h('p', { class: 'dialog-sub' }, 'Le guide est lu sur un appareil où Vyzo est ouvert.'))),
+    form, results,
+    h('p', { class: 'fine' }, icon('info', 13), hasPc
+      ? 'Vyzo PC enregistre, même s’il est éteint maintenant : il le fera à sa prochaine ouverture si le programme n’est pas passé.'
+      : 'Aucun Vyzo PC sur ce compte : c’est lui qui enregistre. Installe-le sur un ordinateur pour que l’enregistrement se fasse.'),
+    h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Fermer'))), 'wide')
+  input.focus()
+}
+
 function castButton(item: CastItem, label: string) {
   return h('button', {
     class: 'icon-btn', type: 'button', title: 'Lancer sur un appareil', 'aria-label': `Lancer ${label} sur un appareil`,
@@ -1543,7 +1862,7 @@ function castDialog(item: CastItem, label: string) {
   const account = state.account!
   const list = h('ul', { class: 'rows' }, devices.map((d) => {
     const ready = castReadiness(d, now)
-    const name = d.name || d.model || 'Appareil'
+    const name = deviceName(d)
     const send: HTMLButtonElement = h('button', {
       class: `btn ${ready === 'ready' ? 'primary' : 'ghost'} small`, type: 'button', disabled: ready !== 'ready',
       onclick: async () => {
@@ -1631,8 +1950,83 @@ function parentalView() {
       'Un enfant ne peut pas passer seul sur un profil adulte.', (on) => ({ ...value!, kidExit: on })),
   ])
 
-  append(box, [h('div', { class: 'settings' }, code, options, categoriesPanel(value?.autoAdult ?? true))])
+  append(box, [h('div', { class: 'settings' }, code, options, screenTimePanel(value), categoriesPanel(value?.autoAdult ?? true))])
   return box
+}
+
+function screenTimePanel(parental: Parental | null) {
+  const profiles = [...(state.profiles ?? [])].sort((a, b) => Number(b.isKid) - Number(a.isKid) || a.position - b.position)
+  const rules = state.screentime
+  let body: (Node | null)[]
+  if (!rules) body = [state.errors.screentime ? h('p', { class: 'form-error' }, state.errors.screentime) : loading(2)]
+  else if (profiles.length === 0) body = [h('p', { class: 'empty small' }, 'Aucun profil sur ce compte.')]
+  else {
+    body = [h('ul', { class: 'rows' }, profiles.map((p) => {
+      const r = rules.get(p.id)
+      const active = !!r && r.enabled && ruleSummary(r) !== 'Aucune limite'
+      return h('li', { class: 'row-card compact' },
+        avatar(p, 'sm'),
+        h('div', { class: 'row-main' },
+          h('div', { class: 'row-title' }, p.name, p.isKid ? h('span', { class: 'pill muted' }, 'Enfant') : null),
+          h('div', { class: 'row-sub' }, active ? h('span', {}, icon('clock', 12), ' ', ruleSummary(r)) : 'Aucune limite')),
+        h('button', { class: `btn ${active ? 'ghost' : 'primary'} small`, type: 'button', onclick: () => screenTimeDialog(p, r ?? null) },
+          active ? 'Modifier' : 'Limiter'))
+    }))]
+  }
+  return panel('Temps d’écran', 'Une plage horaire et une durée par jour, comptée sur tous les appareils.', body,
+    [icon('info', 14), parental?.pinHash
+      ? 'Une fois la limite atteinte, la lecture s’arrête ; le code parental donne une heure de plus. Vyzo 1.13.0-beta3 et plus.'
+      : 'Une fois la limite atteinte, la lecture s’arrête. Définis un code parental pour pouvoir prolonger. Vyzo 1.13.0-beta3 et plus.'])
+}
+
+function screenTimeDialog(p: Profile, current: ScreenTimeRule | null) {
+  const account = state.account!
+  const r = current ?? EMPTY_RULE
+  const field = (id: string, value: string) => h('input', { id, type: 'time', value, step: 300 })
+  const minutes = h('select', { id: 'st-daily' },
+    [0, 30, 45, 60, 90, 120, 150, 180, 240, 300].concat(r.dailyMinutes && ![0, 30, 45, 60, 90, 120, 150, 180, 240, 300].includes(r.dailyMinutes) ? [r.dailyMinutes] : [])
+      .sort((a, b) => a - b)
+      .map((m) => h('option', { value: String(m), selected: m === r.dailyMinutes }, m === 0 ? 'Pas de limite' : minutesLabel(m))))
+  const from = field('st-from', r.from)
+  const to = field('st-to', r.to)
+  const wFrom = field('st-wfrom', r.weekendFrom)
+  const wTo = field('st-wto', r.weekendTo)
+  const error = h('p', { class: 'form-error', role: 'alert' })
+  const save: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, 'Enregistrer')
+  const write = async (rule: ScreenTimeRule | null, done: string, button: HTMLButtonElement) => {
+    if (await act(button, () => backend.saveScreenTime(account, p.id, rule), done)) {
+      dialog.close()
+      await refresh(['screentime'])
+    }
+  }
+  const removeBtn: HTMLButtonElement | null = current ? h('button', {
+    class: 'btn danger-ghost', type: 'button', onclick: () => void write(null, `Plus de limite pour ${p.name}`, removeBtn!),
+  }, 'Retirer les limites') : null
+  const form = h('form', {
+    onsubmit: (e: Event) => {
+      e.preventDefault()
+      const rule: ScreenTimeRule = {
+        enabled: true, dailyMinutes: Number(minutes.value), from: from.value, to: to.value, weekendFrom: wFrom.value, weekendTo: wTo.value,
+      }
+      const problem = checkRule(rule) ?? ((!rule.from) !== (!rule.to) ? 'Semaine : indique l’heure de début et l’heure de fin' : null)
+        ?? ((!rule.weekendFrom) !== (!rule.weekendTo) ? 'Week-end : indique l’heure de début et l’heure de fin' : null)
+      if (problem) { error.textContent = problem; return }
+      void write(rule, `Temps d’écran de ${p.name} enregistré`, save)
+    },
+  },
+    h('div', { class: 'dialog-head' }, avatar(p, 'sm'), h('div', {}, h('h2', {}, 'Temps d’écran'), h('p', { class: 'dialog-sub' }, p.name))),
+    h('label', { for: 'st-daily' }, 'Durée maximale par jour'), minutes,
+    h('p', { class: 'fine' }, 'Tous appareils confondus : TV, téléphone et PC.'),
+    h('fieldset', { class: 'time-range' }, h('legend', {}, 'Du lundi au vendredi'),
+      h('div', { class: 'two' }, h('div', {}, h('label', { for: 'st-from' }, 'À partir de'), from), h('div', {}, h('label', { for: 'st-to' }, 'Jusqu’à'), to))),
+    h('fieldset', { class: 'time-range' }, h('legend', {}, 'Samedi et dimanche'),
+      h('div', { class: 'two' }, h('div', {}, h('label', { for: 'st-wfrom' }, 'À partir de'), wFrom), h('div', {}, h('label', { for: 'st-wto' }, 'Jusqu’à'), wTo))),
+    h('p', { class: 'fine' }, 'Laisse vide pour ne pas limiter les heures. Sans horaire du week-end, celui de la semaine s’applique.'),
+    error,
+    h('div', { class: 'dialog-actions' }, removeBtn, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), save))
+  const dialog = openDialog(form)
+  minutes.focus()
 }
 
 function categoriesPanel(autoAdult: boolean) {
@@ -1743,6 +2137,138 @@ function parentalPinDialog(current: Parental | null | undefined) {
 
 // ------------------------------------------------------------------ Sécurité
 
+// ------------------------------------------------------------------ Statistiques
+
+let statsProfile: string | null = null
+let statsDays: 7 | 30 = 7
+
+function statsView() {
+  const box = h('section', {}, pageHeader('statistiques'), errorBanner('usage'))
+  if (state.vault === null) return append(box, [loading()]), box
+  if (state.vault !== 'open') {
+    return append(box, [vaultGate('Statistiques chiffrées', 'Le temps passé sur chaque titre est chiffré avec le mot de passe du compte. Saisis-le pour le voir.')]), box
+  }
+  const rows = state.usage
+  if (!rows) return append(box, [state.errors.usage ? null : loading(3)]), box
+  const profiles = state.profiles ?? []
+  if (statsProfile && !profiles.some((p) => p.id === statsProfile)) statsProfile = null
+
+  const chip = (label: string, active: boolean, run: () => void, lead: Node | null = null) =>
+    h('button', { class: 'chip', type: 'button', 'aria-pressed': String(active), onclick: () => { run(); renderView() } }, lead, label)
+  const filters = h('div', { class: 'stats-filters' },
+    h('div', { class: 'chips' },
+      chip('Tous', statsProfile === null, () => { statsProfile = null }),
+      profiles.map((p) => chip(p.name, statsProfile === p.id, () => { statsProfile = p.id }, avatar(p, 'xs')))),
+    h('div', { class: 'segmented small', role: 'radiogroup', 'aria-label': 'Période' },
+      ([7, 30] as const).map((n) => h('button', {
+        type: 'button', role: 'radio', 'aria-checked': String(statsDays === n), onclick: () => { statsDays = n; renderView() },
+      }, `${n} jours`))))
+  append(box, [filters])
+
+  if (rows.length === 0) {
+    append(box, [emptyCard('chart', 'Pas encore de statistiques',
+      'Le temps passé est compté par Vyzo 1.13.0-beta3 et plus, puis envoyé chiffré au compte toutes les quelques minutes.')])
+    return box
+  }
+  const sum = summarizeUsage(rows, statsProfile, statsDays)
+  const watchedDays = sum.perDay.filter((d) => d.ms > 0).length
+  const best = sum.perDay.reduce((a, b) => (b.ms > a.ms ? b : a), sum.perDay[0])
+  const kpi = (label: string, value: string, note: string) =>
+    h('div', { class: 'kpi static' }, h('span', { class: 'kpi-label' }, label), h('span', { class: 'kpi-value' }, value), h('span', { class: 'kpi-note' }, note))
+  append(box, [h('div', { class: 'kpis' },
+    kpi('Temps total', sum.totalMs ? duration(sum.totalMs) : '0 min', `sur ${statsDays} jours`),
+    kpi('Par jour', sum.totalMs ? duration(sum.totalMs / statsDays) : '0 min', `en moyenne · ${plural(watchedDays, 'jour actif', 'jours actifs')}`),
+    kpi('Jour le plus chargé', best && best.ms ? duration(best.ms) : '—', best && best.ms ? dayLabel(new Date(`${best.day}T12:00`).getTime()) : 'Aucun'),
+    kpi('Le plus regardé', sum.top[0] ? duration(sum.top[0].ms) : '—', sum.top[0]?.title ?? 'Rien pour l’instant'))])
+
+  // Barres par jour
+  const max = Math.max(1, ...sum.perDay.map((d) => d.ms))
+  const chart = h('div', { class: `day-chart ${statsDays === 30 ? 'dense' : ''}`, role: 'img',
+    'aria-label': `Temps par jour sur ${statsDays} jours` },
+  sum.perDay.map((d) => {
+    const date = new Date(`${d.day}T12:00`)
+    const bar = h('span', { class: 'day-bar' })
+    bar.style.height = `${Math.round((d.ms / max) * 100)}%`
+    const weekday = date.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')
+    return h('div', { class: 'day-col', title: `${dayLabel(date.getTime())} : ${d.ms ? duration(d.ms) : 'rien'}` },
+      h('span', { class: 'day-value' }, d.ms ? duration(d.ms) : ''),
+      h('span', { class: 'day-track' }, bar),
+      h('span', { class: 'day-label' }, statsDays === 7 ? weekday : String(date.getDate())))
+  }))
+  const kinds = [
+    ['Direct et replay', sum.byKind.live, 'live'], ['Films', sum.byKind.movie, 'movie'], ['Séries', sum.byKind.episode, 'episode'],
+    ['Enregistrements', sum.byKind.other, 'other'],
+  ] as const
+  const total = Math.max(1, sum.totalMs)
+  const stack = h('div', { class: 'kind-stack', role: 'img', 'aria-label': 'Répartition par type' },
+    kinds.filter(([, ms]) => ms > 0).map(([label, ms, k]) => {
+      const seg = h('span', { class: `seg k-${k}`, title: `${label} : ${duration(ms)}` })
+      seg.style.width = `${(ms / total) * 100}%`
+      return seg
+    }))
+  const legend = h('ul', { class: 'kind-legend' }, kinds.filter(([, ms]) => ms > 0).map(([label, ms, k]) =>
+    h('li', {}, h('span', { class: `legend-dot k-${k}` }), h('span', {}, label), h('span', { class: 'mono faint' }, `${Math.round((ms / total) * 100)} %`))))
+
+  const topMax = Math.max(1, ...sum.top.map((t) => t.ms))
+  const top = sum.top.length ? h('ol', { class: 'top-list' }, sum.top.map((t) => h('li', {},
+    h('div', { class: 'top-line' }, h('span', { class: 'top-title' }, t.title), h('span', { class: 'mono faint' }, duration(t.ms))),
+    h('div', { class: 'bar' }, barFill(t.ms / topMax))))) : h('p', { class: 'empty small' }, 'Rien sur cette période.')
+
+  const devices = state.devices ?? []
+  const byDevice = [...sum.byDevice.entries()].sort((a, b) => b[1] - a[1])
+  const deviceList = byDevice.length ? h('ul', { class: 'rows' }, byDevice.map(([id, ms]) => {
+    const d = devices.find((x) => x.id === id)
+    return h('li', { class: 'row-card compact' },
+      h('span', { class: 'kind-badge' }, icon(DEVICE_ICON[d?.kind ?? ''] ?? 'devices', 16)),
+      h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d ? deviceName(d) : 'Appareil retiré')),
+      h('span', { class: 'mono faint' }, duration(ms)))
+  })) : h('p', { class: 'empty small' }, 'Rien sur cette période.')
+
+  append(box, [h('div', { class: 'dash-grid' },
+    h('div', {}, sectionTitle('Jour par jour', 'calendar', null), h('div', { class: 'panel chart-panel' }, chart, stack, legend)),
+    h('div', {}, sectionTitle('Les plus regardés', 'play', null), top, sectionTitle('Par appareil', 'devices', null), deviceList))])
+  append(box, [h('p', { class: 'note' }, icon('info', 15), h('span', {},
+    'Compté sur les appareils en Vyzo 1.13.0-beta3 et plus, lecture en cours seulement (pas les menus). Les 35 derniers jours sont gardés, chiffrés.'))])
+  return box
+}
+
+// ------------------------------------------------------------------ Journal
+
+let journalFilter: 'all' | 'security' = 'all'
+
+function journalView() {
+  const box = h('section', {}, pageHeader('journal',
+    h('div', { class: 'segmented small', role: 'radiogroup', 'aria-label': 'Filtre' },
+      ([['all', 'Tout'], ['security', 'Sécurité']] as const).map(([id, label]) => h('button', {
+        type: 'button', role: 'radio', 'aria-checked': String(journalFilter === id), onclick: () => { journalFilter = id; renderView() },
+      }, label)))), errorBanner('events'))
+  const events = state.events
+  if (!events) return append(box, [state.errors.events ? null : loading(4)]), box
+  const shown = journalFilter === 'security' ? events.filter((e) => SENSITIVE_EVENTS.has(e.kind)) : events
+  if (shown.length === 0) {
+    append(box, [emptyCard('journal', journalFilter === 'security' ? 'Rien à signaler' : 'Journal vide',
+      'Les connexions d’appareils, changements de mot de passe, abonnements et profils apparaîtront ici.')])
+    return box
+  }
+  let day = ''
+  const list = h('ol', { class: 'timeline' })
+  for (const e of shown) {
+    const label = dayLabel(e.at)
+    if (label !== day) {
+      day = label
+      list.appendChild(h('li', { class: 'tl-day' }, label))
+    }
+    const t = eventText(e)
+    list.appendChild(h('li', { class: `tl-item ${SENSITIVE_EVENTS.has(e.kind) ? 'sensitive' : ''}` },
+      h('span', { class: 'tl-icon' }, icon(t.icon, 14)),
+      h('div', { class: 'tl-main' }, h('div', { class: 'tl-title' }, t.label), e.detail ? h('div', { class: 'tl-detail' }, e.detail) : null),
+      h('time', { class: 'mono faint', datetime: new Date(e.at).toISOString(), title: fullFmt.format(e.at) }, timeFmt.format(e.at))))
+  }
+  append(box, [list, h('p', { class: 'note' }, icon('info', 15), h('span', {},
+    'Écrit par le serveur du compte : personne ne peut le modifier ni l’effacer. Un appareil inconnu ? Change le mot de passe, puis « Déconnecter les autres appareils » dans Sécurité.'))])
+  return box
+}
+
 function panel(title: string, lead: string | null, body: (Node | null)[], foot?: (Node | string | null)[], danger = false) {
   return h('section', { class: `panel ${danger ? 'danger-zone' : ''}` },
     h('div', { class: 'panel-head' }, h('h2', {}, title), lead ? h('p', {}, lead) : null),
@@ -1840,8 +2366,163 @@ function securityView() {
     }, t.label)))
   const affichage = panel('Affichage', 'Sobre, Cinéma ou Clair. Le choix reste sur cet ordinateur.', [themes])
 
-  append(box, [h('div', { class: 'settings' }, compte, motDePasse, sessions, affichage)])
+  // Sauvegarde
+  const open = state.vault === 'open'
+  const sauvegarde = panel('Sauvegarde du compte',
+    'Profils, listes, historique, abonnements, contrôle parental et réglages dans un seul fichier, chiffré avec un mot de passe que tu choisis.',
+    [h('div', { class: 'row' },
+      h('button', { class: 'btn primary', type: 'button', disabled: !open, onclick: () => backupDialog() }, icon('download', 15), 'Télécharger une sauvegarde'),
+      h('button', { class: 'btn ghost', type: 'button', disabled: !open, onclick: () => restoreDialog() }, icon('upload', 15), 'Restaurer'))],
+    [icon('info', 14), open ? 'Garde le fichier et son mot de passe en lieu sûr : sans lui, la sauvegarde ne s’ouvre pas.'
+      : 'Déverrouille d’abord les données chiffrées (mot de passe du compte).'])
+
+  // Installation
+  const standalone = window.matchMedia('(display-mode: standalone)').matches
+  const ios = /iPhone|iPad/.test(navigator.userAgent)
+  const installation = panel('Application', standalone ? 'Le site est ouvert comme une application.'
+    : 'Ajoute le site à ton bureau ou à l’écran d’accueil du téléphone : il s’ouvre dans sa propre fenêtre.',
+  [standalone ? h('p', { class: 'row' }, icon('check', 15), 'Installé sur cet appareil')
+    : installPrompt ? h('button', { class: 'btn primary', type: 'button', onclick: () => void install() }, icon('install', 15), 'Installer')
+      : h('p', { class: 'fine' }, ios ? 'Sur iPhone et iPad : bouton Partager de Safari, puis « Sur l’écran d’accueil ».'
+        : 'Dans Chrome ou Edge : menu ⋮, puis « Installer Mon compte Vyzo » (ou « Ajouter à l’écran d’accueil »).')])
+
+  append(box, [h('div', { class: 'settings' }, compte, motDePasse, sessions, sauvegarde, installation, affichage)])
   return box
+}
+
+// ------------------------------------------------------------------ Sauvegarde
+
+function backupDialog() {
+  if (state.vault !== 'open') return unlockDialog()
+  const account = state.account!
+  const pw = h('input', { id: 'bk-pw', type: 'password', autocomplete: 'new-password', minlength: 8, required: true })
+  const again = h('input', { id: 'bk-again', type: 'password', autocomplete: 'new-password', minlength: 8, required: true })
+  const error = h('p', { class: 'form-error', role: 'alert' })
+  const go_: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, icon('download', 14), 'Créer le fichier')
+  const form = h('form', {
+    onsubmit: async (e: Event) => {
+      e.preventDefault()
+      error.textContent = ''
+      if (pw.value.length < 8) { error.textContent = 'Au moins 8 caractères.'; return pw.focus() }
+      if (pw.value !== again.value) { error.textContent = 'Les deux mots de passe ne correspondent pas.'; return again.focus() }
+      let made: { file: string; counts: BackupCounts } | null = null
+      if (!await act(go_, async () => { made = await backend.exportBackup(account, pw.value) })) return
+      const { file, counts } = made!
+      const url = URL.createObjectURL(new Blob([file], { type: 'application/json' }))
+      const a = h('a', { href: url, download: `vyzo-sauvegarde-${new Date().toISOString().slice(0, 10)}.json` })
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
+      dialog.close()
+      toast(`Sauvegarde téléchargée : ${countsText(counts)}`)
+    },
+  },
+    h('div', { class: 'dialog-head' }, h('span', { class: 'kind-badge big' }, icon('download', 20)),
+      h('div', {}, h('h2', {}, 'Sauvegarde du compte'), h('p', { class: 'dialog-sub' }, 'Un fichier chiffré, à garder en lieu sûr.'))),
+    h('div', { class: 'two' },
+      h('div', {}, h('label', { for: 'bk-pw' }, 'Mot de passe du fichier'), pw),
+      h('div', {}, h('label', { for: 'bk-again' }, 'Confirmer'), again)),
+    h('p', { class: 'fine' }, 'Il contient tes identifiants d’abonnements IPTV : sans ce mot de passe, personne ne peut le lire, pas même toi.'),
+    error,
+    h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), go_))
+  const dialog = openDialog(form)
+  pw.focus()
+}
+
+function countsText(c: BackupCounts): string {
+  return [plural(c.profiles, 'profil', 'profils'), plural(c.lists + c.items, 'élément de liste', 'éléments de listes'),
+    plural(c.progress, 'titre commencé', 'titres commencés'), plural(c.sealed, 'réglage chiffré', 'réglages chiffrés')].join(', ')
+}
+
+function restoreDialog() {
+  if (state.vault !== 'open') return unlockDialog()
+  const account = state.account!
+  const file = h('input', { id: 'rs-file', type: 'file', accept: '.json,application/json', required: true })
+  const pw = h('input', { id: 'rs-pw', type: 'password', autocomplete: 'off', required: true })
+  const error = h('p', { class: 'form-error', role: 'alert' })
+  const go_: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, 'Ouvrir')
+  const form = h('form', {
+    onsubmit: async (e: Event) => {
+      e.preventDefault()
+      error.textContent = ''
+      const f = file.files?.[0]
+      if (!f) return file.focus()
+      if (f.size > 50 * 1024 * 1024) { error.textContent = 'Fichier trop gros pour une sauvegarde Vyzo.'; return }
+      go_.setAttribute('aria-busy', 'true')
+      go_.disabled = true
+      let data: BackupData | null = null
+      try {
+        data = await backend.readBackup(await f.text(), pw.value)
+        if (!data) { error.textContent = 'Mot de passe incorrect pour ce fichier.'; return pw.focus() }
+      } catch (err) {
+        error.textContent = err instanceof UserError ? err.message : friendlyError(err)
+        return
+      } finally {
+        go_.removeAttribute('aria-busy')
+        go_.disabled = false
+      }
+      dialog.close()
+      const ok = await confirmDialog({
+        title: 'Restaurer cette sauvegarde ?',
+        body: `Sauvegarde du ${data.createdAt ? fullFmt.format(data.createdAt) : 'jour inconnu'} : ${countsText(backupCountsOf(data))}. ` +
+          'Ce qu’elle contient remplace la version actuelle sur tous tes appareils ; ce qui a été ajouté depuis est gardé.',
+        confirm: 'Restaurer',
+      })
+      if (!ok) return
+      const restored = data
+      if (await act(null, () => backend.restoreBackup(account, restored).then(() => undefined), 'Sauvegarde restaurée')) {
+        state = { ...emptyState(), account, playback: state.playback }
+        await refresh(['profiles', 'activity', 'recordings', 'devices', 'playlists'])
+        ensureRouteData()
+      }
+    },
+  },
+    h('div', { class: 'dialog-head' }, h('span', { class: 'kind-badge big' }, icon('upload', 20)),
+      h('div', {}, h('h2', {}, 'Restaurer une sauvegarde'), h('p', { class: 'dialog-sub' }, 'Tu pourras vérifier son contenu avant.'))),
+    h('label', { for: 'rs-file' }, 'Fichier de sauvegarde'), file,
+    h('label', { for: 'rs-pw' }, 'Mot de passe du fichier'), pw,
+    error,
+    h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dialog.close() }, 'Annuler'), go_))
+  const dialog = openDialog(form, 'small')
+}
+
+const backupCountsOf = (d: BackupData): BackupCounts => ({
+  profiles: d.profiles.length, lists: d.lists.length, items: d.items.length, progress: d.progress.length,
+  recordings: d.recordings.length, sealed: d.sealed.length,
+})
+
+// ------------------------------------------------------------------ Installation
+
+interface InstallPromptEvent extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> }
+
+let installPrompt: InstallPromptEvent | null = null
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault()
+  installPrompt = e as InstallPromptEvent
+  if (route() === 'securite') renderView()
+})
+window.addEventListener('appinstalled', () => {
+  installPrompt = null
+  toast('Site installé')
+  if (route() === 'securite') renderView()
+})
+
+async function install() {
+  const p = installPrompt
+  if (!p) return
+  await p.prompt()
+  const choice = await p.userChoice.catch(() => ({ outcome: 'dismissed' }))
+  if (choice.outcome === 'accepted') installPrompt = null
+  renderView()
+}
+
+// La page publiée s'ouvre aussi hors ligne une fois installée (le service worker ne touche pas aux données du compte).
+if (import.meta.env.PROD && 'serviceWorker' in navigator && !backend.demo) {
+  window.addEventListener('load', () => { void navigator.serviceWorker.register('sw.js').catch(() => undefined) })
 }
 
 // ------------------------------------------------------------------ Démarrage

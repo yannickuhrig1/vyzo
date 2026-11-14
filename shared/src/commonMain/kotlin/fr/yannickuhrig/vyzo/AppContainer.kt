@@ -55,6 +55,10 @@ class AppContainer(
         CloudApi(platform.cloudUrl, platform.cloudKey, Http.client),
         cloudStore, db, repo, profiles, settings, scope, realtimeEnabled = realtimeEnabled, platform = platform,
     )
+    /** Temps passé devant Vyzo et règles de temps d'écran posées depuis le site du compte. */
+    val usage = fr.yannickuhrig.vyzo.remote.UsageTracker(this, cloudStore)
+    /** Commandes du site du compte (ce qui est lu, pause, message, recherche dans le guide). */
+    val remote = fr.yannickuhrig.vyzo.remote.DeviceRemote(this)
     val events = AppEvents()
     val pip = PipState()
     val screenIdle = fr.yannickuhrig.vyzo.ui.common.ScreenIdle()
@@ -117,6 +121,8 @@ class AppContainer(
         cloud.onRemoteRecording = { recordings.applyRemote(it) }
         scope.launch { cloud.updateRequests.collect { runCatching { remoteUpdate() } } }
         cloud.start()
+        usage.start()
+        remote.start()
         downloads.start()
         scope.launch { runCatching { parental.refreshAdultFlags() } }
         scope.launch { runCatching { metadataCache.purge() } }

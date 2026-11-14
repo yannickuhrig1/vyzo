@@ -405,6 +405,54 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
         }
     }
 
+    // Site du compte : message envoyé à cet écran, lecture arrêtée à distance, temps d'écran écoulé.
+    var remoteMessage by remember { mutableStateOf<fr.yannickuhrig.vyzo.remote.RemoteMessage?>(null) }
+    var screenBlock by remember { mutableStateOf<fr.yannickuhrig.vyzo.remote.ScreenBlock?>(null) }
+    var screenPin by remember { mutableStateOf(false) }
+    fun leavePlayer() {
+        if (nav.currentBackStackEntry?.destination?.route?.startsWith("player") == true) nav.popBackStack()
+    }
+    LaunchedEffect(Unit) { c.remote.messages.collect { remoteMessage = it } }
+    LaunchedEffect(Unit) { c.remote.stops.collect { leavePlayer() } }
+    LaunchedEffect(Unit) {
+        c.usage.blocked.collect {
+            leavePlayer()
+            screenBlock = it
+        }
+    }
+    remoteMessage?.let { m ->
+        ActionDialog(
+            title = if (m.from.isNotBlank()) "Message de ${m.from}" else "Message",
+            body = m.text,
+            actions = listOf(ActionItem("OK") {}),
+            onDismiss = { remoteMessage = null },
+        )
+    }
+    screenBlock?.let { b ->
+        val pinSet by c.parental.pinSet.collectAsState()
+        if (screenPin) {
+            PinDialog(title = "Code parental", subtitle = "Une heure de plus pour ${b.profileName}", onDismiss = { screenPin = false }) { pin ->
+                val ok = c.usage.extend(b.profileId, pin)
+                if (ok) {
+                    screenPin = false
+                    screenBlock = null
+                }
+                ok
+            }
+        } else {
+            ActionDialog(
+                title = "C'est fini pour l'instant",
+                subtitle = b.profileName,
+                body = b.reason + if (pinSet) "" else "\n\nPour pouvoir prolonger, ajoute un code parental sur le site du compte.",
+                actions = buildList {
+                    add(ActionItem("OK") {})
+                    if (pinSet) add(ActionItem("Code parental", Icons.Default.Key) { screenPin = true })
+                },
+                onDismiss = { if (!screenPin) screenBlock = null },
+            )
+        }
+    }
+
     StartupNotices()
 
     // Connecté au compte sans la clé (connexion faite avant la 1.9.0, par exemple) : les playlists de cet appareil

@@ -46,6 +46,31 @@ import java.util.zip.GZIPOutputStream
 
 class ParsersTest {
     @Test
+    fun screenTimeRules() {
+        val rule = fr.yannickuhrig.vyzo.remote.ScreenTimeRule(dailyMinutes = 90, from = "07:30", to = "20:00", weekendFrom = "08:00", weekendTo = "21:00")
+        assertNull(rule.blockReason(10 * 60, weekend = false, usedMs = 0))
+        assertTrue(rule.blockReason(20 * 60 + 5, weekend = false, usedMs = 0)!!.contains("07:30 à 20:00"))
+        assertNull(rule.blockReason(20 * 60 + 30, weekend = true, usedMs = 0))
+        assertTrue(rule.blockReason(12 * 60, weekend = false, usedMs = 90 * 60_000L)!!.contains("1 h 30"))
+        // Plage qui passe minuit, règle désactivée, heures absentes.
+        val night = fr.yannickuhrig.vyzo.remote.ScreenTimeRule(from = "18:00", to = "02:00")
+        assertNull(night.blockReason(60, weekend = false, usedMs = 0))
+        assertNotNull(night.blockReason(12 * 60, weekend = false, usedMs = 0))
+        assertNull(rule.copy(enabled = false).blockReason(23 * 60, weekend = false, usedMs = Long.MAX_VALUE))
+        assertNull(fr.yannickuhrig.vyzo.remote.ScreenTimeRule().blockReason(3 * 60, weekend = false, usedMs = 10_000_000))
+    }
+
+    @Test
+    fun screenTimeRuleMatchesSite() {
+        // Même texte que ruleJson du site : l'appareil renvoie le bloc reçu sans le modifier.
+        val text = """{"enabled":true,"dailyMinutes":60,"from":"","to":"","weekendFrom":"","weekendTo":""}"""
+        val json = kotlinx.serialization.json.Json { encodeDefaults = true }
+        val rule = json.decodeFromString(fr.yannickuhrig.vyzo.remote.ScreenTimeRule.serializer(), text)
+        assertEquals(60, rule.dailyMinutes)
+        assertEquals(text, json.encodeToString(fr.yannickuhrig.vyzo.remote.ScreenTimeRule.serializer(), rule))
+    }
+
+    @Test
     fun pluralFrancais() {
         assertEquals("0 série", fr.yannickuhrig.vyzo.util.plural(0, "série"))
         assertEquals("1 série", fr.yannickuhrig.vyzo.util.plural(1, "série"))

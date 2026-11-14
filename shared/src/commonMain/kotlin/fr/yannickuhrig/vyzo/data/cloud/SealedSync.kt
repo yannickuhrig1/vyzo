@@ -169,6 +169,23 @@ internal object SealedKeys {
     }
 }
 
+/** Temps passé un jour donné, pour un profil, sur un appareil ; lu par le site du compte (temps d'écran, statistiques). */
+@Serializable
+internal data class SealedUsage(
+    val profile: String,
+    val device: String,
+    val day: String,
+    val totalMs: Long,
+    val liveMs: Long = 0,
+    val movieMs: Long = 0,
+    val episodeMs: Long = 0,
+    val otherMs: Long = 0,
+    val items: List<SealedUsageItem> = emptyList(),
+)
+
+@Serializable
+internal data class SealedUsageItem(val t: String, val ms: Long)
+
 @Serializable
 private data class VaultRecord(val salt: String, val iterations: Int, val wrapped: String, val keyId: String)
 
@@ -209,6 +226,7 @@ internal class SealedSync(
         db.epg().observeSources().map { all -> all.filter { !it.auto }.map { SealedEpg(it.name, it.url, it.enabled, it.priority, it.mode) } }.distinctUntilChanged().drop(1).map { },
         db.categories().observePrefs().distinctUntilChanged().drop(1).map { },
         db.channelPrefs().observeAll().distinctUntilChanged().drop(1).map { },
+        store.flow.map { it.usage to it.screenTime }.distinctUntilChanged().drop(1).map { },
     )
 
     suspend fun state(): VaultState {
@@ -358,6 +376,17 @@ internal class SealedSync(
         }
         add(Item(KIND_SETTINGS, SETTINGS_ID, encode(SealedSettings.serializer(), SealedSettings.of(settings.get()))))
         SealedKeys.of(settings.get()).forEach { (id, value) -> add(Item(KIND_KEY, id, value)) }
+        val data = store.get()
+        // Règles posées depuis le site : renvoyées telles quelles (même empreinte), sinon l'envoi les effacerait.
+        data.screenTime.forEach { (profile, plain) -> add(Item(KIND_SCREENTIME, profile, plain)) }
+        if (data.deviceId.isNotBlank()) {
+            val oldest = dayOf(System.currentTimeMillis() - USAGE_KEEP_DAYS * DAY_MS)
+            data.usage.filter { it.day >= oldest && it.totalMs >= 60_000 }.forEach { u ->
+                val items = u.items.entries.sortedByDescending { it.value }.take(USAGE_ITEMS).map { SealedUsageItem(it.key.take(120), it.value) }
+                val sealedUsage = SealedUsage(u.profile, data.deviceId, u.day, u.totalMs, u.liveMs, u.movieMs, u.episodeMs, u.otherMs, items)
+                add(Item(KIND_USAGE, "${u.profile}|${data.deviceId}|${u.day}", encode(SealedUsage.serializer(), sealedUsage)))
+            }
+        }
     }
 
     // ------------------------------------------------------------------ Réception
@@ -377,12 +406,13 @@ internal class SealedSync(
         // Identifiant local -> avec le guide. Lancé une seule fois à la fin : les fournisseurs n'aiment pas les connexions répétées.
         val reloads = HashMap<Long, Boolean>()
         // Les playlists d'abord : les personnalisations de chaînes ont besoin de leur identifiant local.
-        for (kind in listOf(KIND_PLAYLIST, KIND_PREFS, KIND_EPG, KIND_SETTINGS, KIND_KEY, KIND_PARENTAL)) {
+        for (kind in listOf(KIND_PLAYLIST, KIND_PREFS, KIND_EPG, KIND_SETTINGS, KIND_KEY, KIND_PARENTAL, KIND_SCREENTIME)) {
             for (r in rows.filter { it.str("kind") == kind }) {
                 runCatching { applyRow(session, key, r, known, reloads) }.onFailure { Log.w(TAG, "élément chiffré ignoré", it) }
             }
         }
         store.update { it.copy(sealedKnown = known) }
+        runCatching { applyRemoteUsage(session, key, rows) }.onFailure { Log.w(TAG, "temps des autres appareils", it) }
         reloads.forEach { (id, withEpg) -> repo.sync.launchPlaylist(id, withEpg) }
     }
 
@@ -414,6 +444,10 @@ internal class SealedSync(
                 return
             }
             KIND_KEY -> applyKey(id, plain)
+            KIND_SCREENTIME -> {
+                store.update { it.copy(screenTime = it.screenTime + (id to plain)) }
+                true
+            }
             KIND_PARENTAL -> {
                 val shared = json.decodeFromString(SealedParental.serializer(), plain)
                 val before = settings.get()
@@ -426,6 +460,28 @@ internal class SealedSync(
             else -> false
         }
         if (applied) known[slot] = hash
+    }
+
+    /**
+     * Temps du jour passé sur les autres appareils, pour les limites de temps d'écran. Ces lignes ne sont jamais ajoutées
+     * à [CloudData.sealedKnown] : cet appareil ne les renvoie pas et ne les efface pas.
+     */
+    private suspend fun applyRemoteUsage(session: CloudSession, key: ByteArray, rows: List<JsonObject>) {
+        val today = dayOf(System.currentTimeMillis())
+        val me = store.get().deviceId
+        val seen = HashMap<String, Long>()
+        for (r in rows) {
+            if (r.str("kind") != KIND_USAGE || r.bool("deleted")) continue
+            val id = r.str("id")
+            val parts = id.split('|')
+            if (parts.size != 3 || parts[1] == me || parts[2] != today) continue
+            val plain = runCatching { VaultCrypto.open(key, r.str("payload"), context(session, KIND_USAGE, id)).decodeToString() }.getOrNull() ?: continue
+            seen[id] = runCatching { json.decodeFromString(SealedUsage.serializer(), plain).totalMs }.getOrNull() ?: continue
+        }
+        store.update { d ->
+            val kept = d.remoteUsage.filterKeys { it.endsWith("|$today") }
+            if (seen.isEmpty() && kept.size == d.remoteUsage.size) d else d.copy(remoteUsage = kept + seen)
+        }
     }
 
     private suspend fun applyKey(id: String, value: String): Boolean {
@@ -480,6 +536,7 @@ internal class SealedSync(
             }
             KIND_EPG -> db.epg().sources().firstOrNull { !it.auto && VaultCrypto.sha256(it.url).take(24) == id }?.let { repo.deleteEpgSource(it) }
             KIND_KEY -> settings.update { SealedKeys.set(it, id, "") ?: it }
+            KIND_SCREENTIME -> store.update { it.copy(screenTime = it.screenTime - id) }
         }
     }
 
@@ -516,6 +573,18 @@ internal class SealedSync(
         const val KIND_PARENTAL = "parental"
         const val PARENTAL_ID = "main"
         private const val DAY_MS = 86_400_000L
+        /** Temps passé (site du compte : statistiques, temps d'écran) ; id « profil|appareil|jour ». */
+        const val KIND_USAGE = "usage"
+        /** Règles de temps d'écran d'un profil, écrites par le site ; id = identifiant du profil. */
+        const val KIND_SCREENTIME = "screentime"
+        const val USAGE_KEEP_DAYS = 35
+        private const val USAGE_ITEMS = 30
+
+        /** Jour local « aaaa-mm-jj » (java.time n'est pas disponible avant l'API 26). */
+        fun dayOf(ms: Long): String {
+            val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+            return String.format(java.util.Locale.ROOT, "%04d-%02d-%02d", c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1, c.get(java.util.Calendar.DAY_OF_MONTH))
+        }
 
         private fun slot(kind: String, id: String) = "$kind|$id"
     }

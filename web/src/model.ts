@@ -42,6 +42,8 @@ export type DeviceKind = 'tv' | 'mobile' | 'pc' | ''
 export interface Device {
   id: string
   name: string
+  /** Nom choisi sur le site (vide : celui du système). */
+  label: string
   kind: DeviceKind
   model: string
   system: string
@@ -318,3 +320,269 @@ export function withCategoryLock(prefs: SealedPrefs, rest: string, locked: boole
   }
   return { categories, channels: prefs.channels }
 }
+
+// ------------------------------------------------------------------ Appareils (1.13.0-beta3)
+
+export const MAX_DEVICE_LABEL = 60
+export const MAX_MESSAGE = 300
+
+/** Nom affiché : celui choisi sur le site, sinon celui du système. */
+export const deviceName = (d: Pick<Device, 'name' | 'label'>) => d.label.trim() || d.name || 'Appareil'
+
+/** Versions qui comprennent les commandes du site : message, vérification, lecture en cours, guide (1.13.0-beta3). */
+export const REMOTE_MIN_VERSION = 41
+
+export const supportsRemote = (d: Device) => d.versionCode >= REMOTE_MIN_VERSION
+
+/** Ce qu'un appareil lit (message « playback_state », déchiffré). */
+export interface PlaybackState {
+  state: 'idle' | 'playing' | 'paused'
+  title: string
+  detail: string
+  kind: string
+  positionMs: number
+  durationMs: number
+  profile: string
+  receivedAt: number
+}
+
+export function parsePlayback(text: string, receivedAt: number): PlaybackState | null {
+  try {
+    const o = JSON.parse(text) as Partial<PlaybackState>
+    const state = o.state === 'playing' || o.state === 'paused' ? o.state : 'idle'
+    return {
+      state, title: String(o.title ?? ''), detail: String(o.detail ?? ''), kind: String(o.kind ?? ''),
+      positionMs: Math.max(0, Number(o.positionMs) || 0), durationMs: Math.max(0, Number(o.durationMs) || 0),
+      profile: String(o.profile ?? ''), receivedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Position estimée maintenant : l'appareil n'envoie qu'aux changements. */
+export function livePosition(p: PlaybackState, now: number = Date.now()): number {
+  const pos = p.state === 'playing' ? p.positionMs + (now - p.receivedAt) : p.positionMs
+  return p.durationMs > 0 ? Math.min(p.durationMs, pos) : pos
+}
+
+// ------------------------------------------------------------------ Guide (enregistrer depuis le site)
+
+export interface GuideResult {
+  channelKey: string
+  channel: string
+  title: string
+  start: number
+  stop: number
+  desc: string
+}
+
+/** Même identifiant que CloudSync.recordingId : « clé de chaîne | début | fin ». */
+export const recordingId = (g: Pick<GuideResult, 'channelKey' | 'start' | 'stop'>) => `${g.channelKey}|${g.start}|${g.stop}`
+
+/** Résultats de plusieurs appareils : un seul exemplaire par programme, du plus proche au plus lointain. */
+export function mergeGuide(lists: GuideResult[][], now: number = Date.now()): GuideResult[] {
+  const seen = new Map<string, GuideResult>()
+  for (const list of lists) {
+    for (const g of list) {
+      if (!g.channelKey || !(g.stop > now) || !(g.stop > g.start)) continue
+      const id = recordingId(g)
+      if (!seen.has(id)) seen.set(id, g)
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.start - b.start || a.channel.localeCompare(b.channel, 'fr'))
+}
+
+// ------------------------------------------------------------------ Temps d'écran
+
+/** Règles d'un profil (ScreenTimeRule dans l'appli). Heures « HH:MM », vides = pas de plage ; 0 min = pas de limite. */
+export interface ScreenTimeRule {
+  enabled: boolean
+  dailyMinutes: number
+  from: string
+  to: string
+  weekendFrom: string
+  weekendTo: string
+}
+
+export const EMPTY_RULE: ScreenTimeRule = { enabled: true, dailyMinutes: 0, from: '', to: '', weekendFrom: '', weekendTo: '' }
+
+export function hhmm(text: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(text.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  return h <= 24 && min <= 59 && h * 60 + min <= 1440 ? h * 60 + min : null
+}
+
+/** Même ordre de champs que ScreenTimeRule (Kotlin), pour que l'appli renvoie le même texte. */
+export const ruleJson = (r: ScreenTimeRule) => JSON.stringify({
+  enabled: r.enabled, dailyMinutes: r.dailyMinutes, from: r.from, to: r.to, weekendFrom: r.weekendFrom, weekendTo: r.weekendTo,
+})
+
+export function parseRule(text: string): ScreenTimeRule {
+  const o = JSON.parse(text) as Partial<ScreenTimeRule>
+  return {
+    enabled: o.enabled !== false, dailyMinutes: Math.max(0, Math.round(Number(o.dailyMinutes) || 0)),
+    from: String(o.from ?? ''), to: String(o.to ?? ''), weekendFrom: String(o.weekendFrom ?? ''), weekendTo: String(o.weekendTo ?? ''),
+  }
+}
+
+/** Message d'erreur, ou null si les règles sont cohérentes. */
+export function checkRule(r: ScreenTimeRule): string | null {
+  const pair = (f: string, t: string, what: string) => {
+    if (!f && !t) return null
+    if (hhmm(f) === null || hhmm(t) === null) return `Heures ${what} : écris-les sous la forme 07:30`
+    if (hhmm(f) === hhmm(t)) return `Heures ${what} : le début et la fin sont identiques`
+    return null
+  }
+  if (r.dailyMinutes < 0 || r.dailyMinutes > 1440) return 'Durée par jour : entre 0 et 24 h'
+  return pair(r.from, r.to, 'de la semaine') ?? pair(r.weekendFrom, r.weekendTo, 'du week-end')
+}
+
+export function minutesLabel(min: number): string {
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  const rest = min % 60
+  return rest ? `${h} h ${String(rest).padStart(2, '0')}` : `${h} h`
+}
+
+/** Résumé lisible : « 1 h 30 par jour · 07:00 – 20:30 ». */
+export function ruleSummary(r: ScreenTimeRule | null | undefined): string {
+  if (!r || !r.enabled) return 'Aucune limite'
+  const parts: string[] = []
+  if (r.dailyMinutes > 0) parts.push(`${minutesLabel(r.dailyMinutes)} par jour`)
+  if (r.from && r.to) parts.push(`${r.from} – ${r.to}`)
+  if (r.weekendFrom && r.weekendTo) parts.push(`week-end ${r.weekendFrom} – ${r.weekendTo}`)
+  return parts.length ? parts.join(' · ') : 'Aucune limite'
+}
+
+// ------------------------------------------------------------------ Statistiques
+
+/** Ligne chiffrée « usage » (SealedUsage) : temps d'un profil, un jour, sur un appareil. */
+export interface UsageDay {
+  profile: string
+  device: string
+  day: string
+  totalMs: number
+  liveMs: number
+  movieMs: number
+  episodeMs: number
+  otherMs: number
+  items: { t: string; ms: number }[]
+}
+
+export function parseUsage(text: string): UsageDay | null {
+  try {
+    const o = JSON.parse(text) as Partial<UsageDay>
+    if (!o.profile || !o.day) return null
+    const n = (v: unknown) => Math.max(0, Number(v) || 0)
+    return {
+      profile: String(o.profile), device: String(o.device ?? ''), day: String(o.day), totalMs: n(o.totalMs),
+      liveMs: n(o.liveMs), movieMs: n(o.movieMs), episodeMs: n(o.episodeMs), otherMs: n(o.otherMs),
+      items: Array.isArray(o.items) ? o.items.map((i) => ({ t: String(i?.t ?? ''), ms: n(i?.ms) })).filter((i) => i.t) : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Jour local « aaaa-mm-jj », comme SealedSync.dayOf. */
+export function dayKey(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export interface UsageSummary {
+  totalMs: number
+  /** Un total par jour, du plus ancien au plus récent ([days] jours, aujourd'hui compris). */
+  perDay: { day: string; ms: number }[]
+  byKind: { live: number; movie: number; episode: number; other: number }
+  top: { title: string; ms: number }[]
+  byDevice: Map<string, number>
+}
+
+export function summarizeUsage(rows: UsageDay[], profileId: string | null, days: number, now: number = Date.now()): UsageSummary {
+  const keys: string[] = []
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
+    keys.push(dayKey(d.getTime()))
+  }
+  const inRange = new Set(keys)
+  const perDay = new Map(keys.map((k) => [k, 0]))
+  const byKind = { live: 0, movie: 0, episode: 0, other: 0 }
+  const titles = new Map<string, number>()
+  const byDevice = new Map<string, number>()
+  let totalMs = 0
+  for (const r of rows) {
+    if (!inRange.has(r.day) || (profileId && r.profile !== profileId)) continue
+    totalMs += r.totalMs
+    perDay.set(r.day, (perDay.get(r.day) ?? 0) + r.totalMs)
+    byKind.live += r.liveMs
+    byKind.movie += r.movieMs
+    byKind.episode += r.episodeMs
+    byKind.other += r.otherMs
+    byDevice.set(r.device, (byDevice.get(r.device) ?? 0) + r.totalMs)
+    for (const i of r.items) titles.set(i.t, (titles.get(i.t) ?? 0) + i.ms)
+  }
+  const top = [...titles.entries()].map(([title, ms]) => ({ title, ms })).sort((a, b) => b.ms - a.ms).slice(0, 10)
+  return { totalMs, perDay: keys.map((day) => ({ day, ms: perDay.get(day) ?? 0 })), byKind, top, byDevice }
+}
+
+// ------------------------------------------------------------------ Journal du compte
+
+export interface AccountEvent { id: number; at: number; kind: string; detail: string }
+
+const EVENT_TEXT: Record<string, [string, string]> = {
+  device_added: ['Nouvel appareil connecté', 'devices'],
+  device_removed: ['Appareil retiré du compte', 'devices'],
+  device_renamed: ['Appareil renommé', 'devices'],
+  device_updated: ['Appareil mis à jour', 'download'],
+  update_requested: ['Mise à jour demandée', 'download'],
+  profile_added: ['Profil créé', 'user'],
+  profile_removed: ['Profil supprimé', 'user'],
+  profile_renamed: ['Profil renommé', 'user'],
+  profile_pin_set: ['Code de profil ajouté ou changé', 'lock'],
+  profile_pin_removed: ['Code de profil retiré', 'lock'],
+  profile_kid_on: ['Profil passé en mode enfant', 'child'],
+  profile_kid_off: ['Mode enfant retiré', 'child'],
+  playlist_added: ['Abonnement IPTV ajouté', 'playlist'],
+  playlist_removed: ['Abonnement IPTV retiré', 'playlist'],
+  vault_reset: ['Clé des données chiffrées remplacée', 'key'],
+  parental_changed: ['Contrôle parental modifié', 'shield'],
+  screentime_changed: ['Temps d’écran modifié', 'clock'],
+  recording_added: ['Enregistrement programmé', 'record'],
+  site_signin: ['Connexion au site du compte', 'login'],
+  password_changed: ['Mot de passe changé', 'key'],
+  signout_others: ['Autres appareils déconnectés', 'logout'],
+  backup_export: ['Sauvegarde du compte téléchargée', 'download'],
+  backup_restore: ['Sauvegarde du compte restaurée', 'upload'],
+  message_sent: ['Message envoyé à un appareil', 'message'],
+}
+
+export function eventText(e: Pick<AccountEvent, 'kind'>): { label: string; icon: string } {
+  const t = EVENT_TEXT[e.kind]
+  return t ? { label: t[0], icon: t[1] } : { label: 'Activité du compte', icon: 'info' }
+}
+
+/** Les événements qui touchent à la sécurité ressortent dans le journal. */
+export const SENSITIVE_EVENTS = new Set(['device_added', 'password_changed', 'vault_reset', 'signout_others', 'backup_restore', 'playlist_removed'])
+
+// ------------------------------------------------------------------ Sauvegarde
+
+export const BACKUP_FORMAT = 'vyzo-backup'
+export const BACKUP_VERSION = 1
+/** Données chiffrées reprises dans une sauvegarde : ce que l'utilisateur a choisi, pas ce que les appareils recalculent. */
+export const BACKUP_SEALED_KINDS = ['playlist', 'prefs', 'epg', 'settings', 'key', 'parental', 'screentime']
+
+export interface BackupFile {
+  format: string
+  version: number
+  createdAt: number
+  salt: string
+  iterations: number
+  box: string
+}
+
+export interface BackupCounts { profiles: number; lists: number; items: number; progress: number; recordings: number; sealed: number }

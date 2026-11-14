@@ -1,11 +1,13 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
 import {
-  FAVORITES_LIST_ID, WEB_SENDER, nextUpdatedAt, withCategoryLock,
+  BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, mergeGuide, nextUpdatedAt,
+  parsePlayback, parseRule, parseUsage, recordingId, ruleJson, withCategoryLock,
+  type AccountEvent, type BackupCounts, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
   type ProfileActivity, type ProgressItem, type Recording, type RecordingStatus, type UserList,
 } from './model'
 import {
-  context, deriveKey, keyId, metaContext, openText, toBase64, parseMeta, parsePlaylist, playlistJson, playlistKey, seal, unwrapVault,
+  context, deriveKey, fromBase64, keyId, metaContext, openText, toBase64, parseMeta, parsePlaylist, playlistJson, playlistKey, seal, unwrapVault,
   type SealedMeta, type VaultRecord,
 } from './vault'
 import { forgetKey, hasRememberedKey, recallKey, rememberKey } from './keystore'
@@ -29,6 +31,27 @@ export interface ListsData { lists: UserList[]; items: ListItem[] }
 export type PlaylistDraft = Omit<Playlist, 'id' | 'updatedAt' | 'hasPrefs' | 'status'>
 
 export interface CastItem { contentKey: string; itemType: string; title: string; positionMs: number }
+
+/** Message d'un appareil sur le canal du compte (DeviceRemote) : réponse à une commande ou état de lecture. */
+export interface LiveMessage { type: string; device: string; req: string; box: string; action: string }
+
+export type PlaybackAction = 'pause' | 'resume' | 'stop'
+
+/** Contenu d'une sauvegarde, une fois déchiffrée. */
+export interface BackupData {
+  createdAt: number
+  profiles: Record<string, unknown>[]
+  lists: Record<string, unknown>[]
+  items: Record<string, unknown>[]
+  progress: Record<string, unknown>[]
+  recordings: Record<string, unknown>[]
+  sealed: { kind: string; id: string; plain: string }[]
+}
+
+export const backupCounts = (d: BackupData): BackupCounts => ({
+  profiles: d.profiles.length, lists: d.lists.length, items: d.items.length, progress: d.progress.length,
+  recordings: d.recordings.length, sealed: d.sealed.length,
+})
 
 const EMPTY_PREFS: SealedPrefs = { categories: [], channels: [] }
 
@@ -92,7 +115,66 @@ export interface Backend {
   /** Catégories d'un abonnement (envoyées par un appareil) et préférences actuelles. */
   catalog(account: Account, playlistId: string): Promise<{ entries: CatalogEntry[]; prefs: SealedPrefs }>
   setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean): Promise<void>
+
+  /** Nom choisi pour un appareil ; vide : celui du système. */
+  renameDevice(d: Device, label: string): Promise<void>
+  /** Messages des appareils sur le canal du compte (watch doit être actif). */
+  onLive(listener: (m: LiveMessage) => void): () => void
+  /** Demande à l'appareil de vérifier tout de suite l'état de ses abonnements. Renvoie l'identifiant de la demande. */
+  checkNow(account: Account, d: Device): Promise<string>
+  sendMessage(account: Account, d: Device, text: string, from: string): Promise<string>
+  /** Chaque appareil connecté répond par son état de lecture (« playback_state »). */
+  queryPlayback(account: Account): Promise<void>
+  controlPlayback(account: Account, d: Device, action: PlaybackAction): Promise<void>
+  openPlayback(account: Account, box: string): Promise<PlaybackState | null>
+  /** Recherche dans le guide des appareils connectés (le site n'a pas le guide). */
+  searchGuide(account: Account, query: string): Promise<GuideResult[]>
+  scheduleRecording(g: GuideResult): Promise<void>
+
+  screenTime(account: Account): Promise<Map<string, ScreenTimeRule>>
+  saveScreenTime(account: Account, profileId: string, rule: ScreenTimeRule | null): Promise<void>
+  usage(account: Account): Promise<UsageDay[]>
+
+  events(): Promise<AccountEvent[]>
+  logEvent(kind: string, detail?: string): Promise<void>
+
+  /** Fichier de sauvegarde chiffré avec [password]. */
+  exportBackup(account: Account, password: string): Promise<{ file: string; counts: BackupCounts }>
+  /** null : mot de passe incorrect. */
+  readBackup(text: string, password: string): Promise<BackupData | null>
+  restoreBackup(account: Account, data: BackupData): Promise<BackupCounts>
 }
+
+/** Contexte du chiffrement d'une sauvegarde : un bloc d'un autre usage ne s'ouvre pas comme sauvegarde. */
+export const BACKUP_CONTEXT = `${BACKUP_FORMAT}|v${BACKUP_VERSION}`
+
+export function parseBackupFile(text: string): BackupFile {
+  let o: Partial<BackupFile>
+  try {
+    o = JSON.parse(text) as Partial<BackupFile>
+  } catch {
+    throw new UserError('Ce fichier n’est pas une sauvegarde Vyzo')
+  }
+  if (o.format !== BACKUP_FORMAT || typeof o.box !== 'string' || typeof o.salt !== 'string') throw new UserError('Ce fichier n’est pas une sauvegarde Vyzo')
+  if (Number(o.version) > BACKUP_VERSION) throw new UserError('Sauvegarde faite par une version plus récente du site')
+  const iterations = Number(o.iterations)
+  if (!Number.isInteger(iterations) || iterations < 100_000 || iterations > 5_000_000) throw new UserError('Sauvegarde abîmée')
+  return { format: o.format, version: Number(o.version), createdAt: Number(o.createdAt) || 0, salt: o.salt, iterations, box: o.box }
+}
+
+export function parseBackupData(text: string): BackupData {
+  const o = JSON.parse(text) as Partial<BackupData>
+  const rows = (v: unknown) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') as Record<string, unknown>[] : [])
+  return {
+    createdAt: Number(o.createdAt) || 0,
+    profiles: rows(o.profiles), lists: rows(o.lists), items: rows(o.items), progress: rows(o.progress), recordings: rows(o.recordings),
+    sealed: rows(o.sealed).filter((x) => BACKUP_SEALED_KINDS.includes(String(x.kind)) && typeof x.id === 'string' && typeof x.plain === 'string')
+      .map((x) => ({ kind: String(x.kind), id: String(x.id), plain: String(x.plain) })),
+  }
+}
+
+/** Identifiant de demande, pour reconnaître les réponses. */
+export const requestId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('')
 
 /** Message d'erreur lisible, comme CloudApi.friendlyMessage. */
 export function friendlyError(e: unknown): string {
@@ -122,7 +204,7 @@ interface RecordingRow {
 }
 
 interface DeviceRow {
-  id: string; name: string; kind: DeviceKind; model: string; system: string; app_version: string; version_code: number
+  id: string; name: string; label?: string; kind: DeviceKind; model: string; system: string; app_version: string; version_code: number
   last_seen_at: number; update_requested_at: number; update_status: string; update_status_at: number
 }
 
@@ -151,7 +233,7 @@ const toRecording = (r: RecordingRow): Recording => ({
 })
 
 const toDevice = (r: DeviceRow): Device => ({
-  id: r.id, name: r.name, kind: r.kind ?? '', model: r.model ?? '', system: r.system ?? '', appVersion: r.app_version ?? '',
+  id: r.id, name: r.name, label: r.label ?? '', kind: r.kind ?? '', model: r.model ?? '', system: r.system ?? '', appVersion: r.app_version ?? '',
   versionCode: r.version_code ?? 0, lastSeenAt: Number(r.last_seen_at), updateRequestedAt: Number(r.update_requested_at),
   updateStatus: r.update_status ?? '', updateStatusAt: Number(r.update_status_at),
 })
@@ -168,6 +250,7 @@ export class SupabaseBackend implements Backend {
   private readonly db: SupabaseClient
   private readonly url: string
   private channel: RealtimeChannel | null = null
+  private readonly liveListeners = new Set<(m: LiveMessage) => void>()
   /** Clé du compte, en mémoire seulement : perdue au rechargement de la page. */
   private vaultKey: Uint8Array | null = null
   private vaultUser = ''
@@ -195,6 +278,7 @@ export class SupabaseBackend implements Backend {
     const { data, error } = await this.db.auth.signInWithPassword({ email: email.trim(), password })
     if (error) throw error
     const account = { userId: data.user.id, email: data.user.email ?? '' }
+    void this.logEvent('site_signin', navigatorLabel())
     if (!remember) await forgetKey()
     // Le mot de passe du compte ouvre aussi ses données chiffrées : autant le faire tout de suite.
     await this.unlockVault(account, password, remember).catch(() => false)
@@ -220,6 +304,7 @@ export class SupabaseBackend implements Backend {
         ch = ch.on('postgres_changes', { event: '*', schema: 'public', table, filter: `user_id=eq.${account.userId}` },
           () => onChange(table))
       }
+      ch = ch.on('broadcast', { event: 'broadcast' }, (msg) => this.emitLive(msg.payload as Record<string, unknown> | undefined))
       this.channel = ch.subscribe()
     }
     void run()
@@ -293,7 +378,10 @@ export class SupabaseBackend implements Backend {
     }
     const { error } = await this.db.auth.updateUser({ password: next })
     if (error) throw error
-    if (!key) return
+    if (!key) {
+      void this.logEvent('password_changed')
+      return
+    }
     // Comme SealedSync.writeVault : nouveau sel, même clé. keyId ne change pas, les appareils restent ouverts.
     const salt = crypto.getRandomValues(new Uint8Array(16))
     const iterations = 600_000
@@ -305,7 +393,10 @@ export class SupabaseBackend implements Backend {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { error: e } = await this.db.from('sealed_items')
         .upsert({ kind: 'vault', id: 'key', payload, updated_at: Date.now(), deleted: false }, { onConflict: 'user_id,kind,id' })
-      if (!e) return
+      if (!e) {
+        void this.logEvent('password_changed')
+        return
+      }
       last = e
     }
     throw new UserError(`Mot de passe changé, mais la clé n’a pas pu être rechiffrée (${friendlyError(last)}). Sans fermer cette page, recommence avec le nouveau mot de passe comme mot de passe actuel.`)
@@ -318,6 +409,7 @@ export class SupabaseBackend implements Backend {
   async signOutOthers(): Promise<void> {
     const { error } = await this.db.auth.signOut({ scope: 'others' })
     if (error) throw error
+    void this.logEvent('signout_others')
   }
 
   private key(account: Account): Uint8Array {
@@ -496,11 +588,19 @@ export class SupabaseBackend implements Backend {
   // ---------------------------------------------------------------- Appareils
 
   async devices(): Promise<Device[]> {
-    const { data, error } = await this.db.from('devices')
-      .select('id,name,kind,model,system,app_version,version_code,last_seen_at,update_requested_at,update_status,update_status_at')
-      .order('last_seen_at', { ascending: false }).limit(PAGE)
+    const base = 'id,name,kind,model,system,app_version,version_code,last_seen_at,update_requested_at,update_status,update_status_at'
+    const read = (columns: string) => this.db.from('devices').select(columns).order('last_seen_at', { ascending: false }).limit(PAGE)
+    let { data, error } = await read(`${base},label`)
+    // Serveur sans la colonne « label » (migration journal_et_noms pas encore passée).
+    if (error && (error.code === '42703' || /label/.test(error.message))) ({ data, error } = await read(base))
     if (error) throw error
-    return (data as DeviceRow[]).map(toDevice)
+    return (data as unknown as DeviceRow[]).map(toDevice)
+  }
+
+  async renameDevice(d: Device, label: string): Promise<void> {
+    const { error } = await this.db.from('devices').update({ label: label.trim().slice(0, MAX_DEVICE_LABEL) }).eq('id', d.id)
+    if (error && (error.code === '42703' || error.code === 'PGRST204')) throw new UserError('Le serveur Vyzo n’a pas encore cette fonction (mise à jour du serveur à faire)')
+    if (error) throw error
   }
 
   async latestVersion(): Promise<LatestVersion | null> {
@@ -642,6 +742,230 @@ export class SupabaseBackend implements Backend {
     await this.writeSealed(account, 'prefs', playlistId, JSON.stringify(withCategoryLock(current, rest, locked)))
   }
 
+  // ---------------------------------------------------------------- Commandes aux appareils
+
+  onLive(listener: (m: LiveMessage) => void): () => void {
+    this.liveListeners.add(listener)
+    return () => this.liveListeners.delete(listener)
+  }
+
+  private emitLive(p: Record<string, unknown> | undefined) {
+    if (!p || typeof p.type !== 'string') return
+    const m: LiveMessage = {
+      type: p.type, device: String(p.device ?? ''), req: String(p.req ?? ''), box: String(p.box ?? ''), action: String(p.action ?? ''),
+    }
+    for (const l of this.liveListeners) l(m)
+  }
+
+  private async sealLive(account: Account, type: string, plain: string): Promise<string> {
+    return seal(this.key(account), plain, context(account.userId, 'live', type))
+  }
+
+  private async openLive(account: Account, type: string, box: string): Promise<string | null> {
+    if (!box || !this.vaultKey || this.vaultUser !== account.userId) return null
+    try {
+      return await openText(this.vaultKey, box, context(account.userId, 'live', type))
+    } catch {
+      return null
+    }
+  }
+
+  async checkNow(account: Account, d: Device): Promise<string> {
+    const req = requestId()
+    await this.broadcast(account, { type: 'device_check', target: d.id, req })
+    return req
+  }
+
+  async sendMessage(account: Account, d: Device, text: string, from: string): Promise<string> {
+    const req = requestId()
+    const box = await this.sealLive(account, 'device_message', JSON.stringify({ text: text.trim().slice(0, MAX_MESSAGE), from: from.trim().slice(0, 60) }))
+    await this.broadcast(account, { type: 'device_message', target: d.id, req, box })
+    void this.logEvent('message_sent', d.label || d.name)
+    return req
+  }
+
+  async queryPlayback(account: Account): Promise<void> {
+    await this.broadcast(account, { type: 'playback_query', req: requestId() })
+  }
+
+  async controlPlayback(account: Account, d: Device, action: PlaybackAction): Promise<void> {
+    await this.broadcast(account, { type: 'playback_control', target: d.id, action, req: requestId() })
+  }
+
+  async openPlayback(account: Account, box: string): Promise<PlaybackState | null> {
+    const text = await this.openLive(account, 'playback_state', box)
+    return text ? parsePlayback(text, Date.now()) : null
+  }
+
+  async searchGuide(account: Account, query: string): Promise<GuideResult[]> {
+    const req = requestId()
+    const box = await this.sealLive(account, 'guide_search', JSON.stringify({ q: query.trim().slice(0, 80) }))
+    const answers: GuideResult[][] = []
+    await new Promise<void>((done) => {
+      let settle: number | undefined
+      const total = window.setTimeout(finish, 6000)
+      const stop = this.onLive((m) => {
+        if (m.type !== 'guide_results' || m.req !== req) return
+        void this.openLive(account, 'guide_results', m.box).then((text) => {
+          if (!text) return
+          try {
+            const items = (JSON.parse(text) as { items?: GuideResult[] }).items ?? []
+            answers.push(items.map((g) => ({
+              channelKey: String(g.channelKey ?? ''), channel: String(g.channel ?? ''), title: String(g.title ?? ''),
+              start: Number(g.start) || 0, stop: Number(g.stop) || 0, desc: String(g.desc ?? ''),
+            })))
+          } catch {
+            return
+          }
+          // Les autres appareils ont un peu plus d'une seconde pour répondre à leur tour.
+          if (settle === undefined) settle = window.setTimeout(finish, 1500)
+        })
+      })
+      function finish() {
+        window.clearTimeout(total)
+        if (settle !== undefined) window.clearTimeout(settle)
+        stop()
+        done()
+      }
+      void this.broadcast(account, { type: 'guide_search', req, box })
+    })
+    if (answers.length === 0) throw new UserError('Aucun appareil n’a répondu : ouvre Vyzo sur un appareil qui a le guide des programmes')
+    return mergeGuide(answers)
+  }
+
+  async scheduleRecording(g: GuideResult): Promise<void> {
+    const { error } = await this.db.from('recordings').upsert({
+      id: recordingId(g), channel_key: g.channelKey, channel_name: g.channel.slice(0, 120), title: g.title.slice(0, 200),
+      start_ms: g.start, stop_ms: g.stop, status: 'SCHEDULED', error: '', sender: WEB_SENDER, updated_at: Date.now(), deleted: false,
+    }, { onConflict: 'user_id,id' })
+    if (error) throw error
+  }
+
+  // ---------------------------------------------------------------- Temps d'écran, statistiques
+
+  private async openRows(account: Account, kind: string): Promise<{ id: string; text: string }[]> {
+    const key = this.key(account)
+    const rows = await this.selectAll<SealedRow>('sealed_items', 'kind,id,payload,updated_at', (q) => q.eq('kind', kind).eq('deleted', false))
+    const out: { id: string; text: string }[] = []
+    for (const r of rows) {
+      try {
+        out.push({ id: r.id, text: await openText(key, r.payload, context(account.userId, kind, r.id)) })
+      } catch {
+        // Illisible (clé remplacée) : ignoré.
+      }
+    }
+    return out
+  }
+
+  async screenTime(account: Account): Promise<Map<string, ScreenTimeRule>> {
+    const out = new Map<string, ScreenTimeRule>()
+    for (const r of await this.openRows(account, 'screentime')) {
+      try {
+        out.set(r.id, parseRule(r.text))
+      } catch {
+        // ignoré
+      }
+    }
+    return out
+  }
+
+  async saveScreenTime(account: Account, profileId: string, rule: ScreenTimeRule | null): Promise<void> {
+    await this.writeSealed(account, 'screentime', profileId, rule && ruleJson(rule))
+  }
+
+  async usage(account: Account): Promise<UsageDay[]> {
+    return (await this.openRows(account, 'usage')).map((r) => parseUsage(r.text)).filter((u): u is UsageDay => !!u)
+  }
+
+  // ---------------------------------------------------------------- Journal
+
+  async events(): Promise<AccountEvent[]> {
+    const { data, error } = await this.db.from('account_events').select('id,at,kind,detail').order('at', { ascending: false }).limit(300)
+    if (error) throw error
+    return (data as { id: number; at: string; kind: string; detail: string }[])
+      .map((r) => ({ id: Number(r.id), at: Date.parse(r.at), kind: r.kind, detail: r.detail ?? '' }))
+  }
+
+  async logEvent(kind: string, detail = ''): Promise<void> {
+    // Le journal ne doit jamais bloquer une action (serveur pas encore à jour, réseau coupé).
+    await this.db.from('account_events').insert({ kind, detail: detail.slice(0, 200) }).then(() => undefined, () => undefined)
+  }
+
+  // ---------------------------------------------------------------- Sauvegarde
+
+  async exportBackup(account: Account, password: string): Promise<{ file: string; counts: BackupCounts }> {
+    const key = this.key(account)
+    const strip = (rows: Record<string, unknown>[]) => rows.map(({ user_id: _u, synced_at: _s, ...rest }) => rest)
+    const now = Date.now()
+    const [profiles, lists, items, progress, recordings, sealedRows] = await Promise.all([
+      this.selectAll<Record<string, unknown>>('profiles', '*', (q) => q.eq('deleted', false)),
+      this.selectAll<Record<string, unknown>>('user_lists', '*', (q) => q.eq('deleted', false)),
+      this.selectAll<Record<string, unknown>>('list_items', '*', (q) => q.eq('deleted', false)),
+      this.selectAll<Record<string, unknown>>('watch_progress', '*', (q) => q),
+      this.selectAll<Record<string, unknown>>('recordings', '*', (q) => q.eq('deleted', false).gt('stop_ms', now)),
+      this.selectAll<SealedRow>('sealed_items', 'kind,id,payload,updated_at', (q) => q.in('kind', BACKUP_SEALED_KINDS).eq('deleted', false)),
+    ])
+    const sealed: BackupData['sealed'] = []
+    for (const r of sealedRows) {
+      try {
+        // En clair dans la sauvegarde (elle-même chiffrée) : elle se restaure même après un changement de clé du compte.
+        sealed.push({ kind: r.kind, id: r.id, plain: await openText(key, r.payload, context(account.userId, r.kind, r.id)) })
+      } catch {
+        // Bloc illisible : pas sauvegardé.
+      }
+    }
+    const data: BackupData = {
+      createdAt: now, profiles: strip(profiles), lists: strip(lists), items: strip(items), progress: strip(progress),
+      recordings: strip(recordings), sealed,
+    }
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const iterations = 600_000
+    const kek = await deriveKey(password, salt, iterations)
+    const file: BackupFile = {
+      format: BACKUP_FORMAT, version: BACKUP_VERSION, createdAt: now, salt: toBase64(salt), iterations,
+      box: await seal(kek, JSON.stringify(data), BACKUP_CONTEXT),
+    }
+    void this.logEvent('backup_export')
+    return { file: JSON.stringify(file), counts: backupCounts(data) }
+  }
+
+  async readBackup(text: string, password: string): Promise<BackupData | null> {
+    const f = parseBackupFile(text)
+    const kek = await deriveKey(password, fromBase64(f.salt), f.iterations)
+    let plain: string
+    try {
+      plain = await openText(kek, f.box, BACKUP_CONTEXT)
+    } catch {
+      return null
+    }
+    return parseBackupData(plain)
+  }
+
+  async restoreBackup(account: Account, data: BackupData): Promise<BackupCounts> {
+    const key = this.key(account)
+    const now = Date.now()
+    // Plus récent que tout : la version restaurée l'emporte sur les appareils (dernier écrit gagnant).
+    const fresh = (rows: Record<string, unknown>[], extra: Record<string, unknown> = {}) =>
+      rows.map(({ user_id: _u, synced_at: _s, ...rest }) => ({ ...rest, ...extra, updated_at: now }))
+    const put = async (table: string, rows: Record<string, unknown>[], onConflict: string) => {
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error } = await this.db.from(table).upsert(rows.slice(i, i + 500), { onConflict })
+        if (error) throw error
+      }
+    }
+    await put('profiles', fresh(data.profiles, { deleted: false }), 'user_id,id')
+    await put('user_lists', fresh(data.lists, { deleted: false }), 'user_id,profile_id,id')
+    await put('list_items', fresh(data.items, { deleted: false }), 'user_id,profile_id,list_id,content_key')
+    await put('watch_progress', fresh(data.progress), 'user_id,profile_id,content_key')
+    await put('recordings', fresh(data.recordings.filter((r) => Number(r.stop_ms) > now), { deleted: false, sender: WEB_SENDER }), 'user_id,id')
+    const sealedRows = await Promise.all(data.sealed.map(async (x) => ({
+      kind: x.kind, id: x.id, payload: await seal(key, x.plain, context(account.userId, x.kind, x.id)), updated_at: now, deleted: false,
+    })))
+    await put('sealed_items', sealedRows, 'user_id,kind,id')
+    void this.logEvent('backup_restore')
+    return backupCounts(data)
+  }
+
   // ---------------------------------------------------------------- Outils
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -674,4 +998,12 @@ export class SupabaseBackend implements Backend {
     })
     await this.db.removeChannel(once)
   }
+}
+
+/** Navigateur et système, pour le journal (« Firefox · Linux »). */
+function navigatorLabel(): string {
+  const ua = navigator.userAgent
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Navigateur'
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : ''
+  return os ? `${browser} · ${os}` : browser
 }

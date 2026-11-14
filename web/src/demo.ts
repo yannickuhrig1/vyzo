@@ -1,6 +1,11 @@
-import { UserError, type Account, type Backend, type CastItem, type ListsData, type PlaylistDraft, type Table, type VaultStatus } from './backend'
 import {
-  nextUpdatedAt, withCategoryLock,
+  UserError, backupCounts, requestId,
+  type Account, type Backend, type BackupData, type CastItem, type ListsData, type LiveMessage, type PlaybackAction, type PlaylistDraft, type Table,
+  type VaultStatus,
+} from './backend'
+import {
+  dayKey, mergeGuide, nextUpdatedAt, recordingId, withCategoryLock,
+  type AccountEvent, type BackupCounts, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type Device, type Parental, type SealedPrefs, type ListItem, type Playlist, type Profile, type ProfileActivity, type ProgressItem, type Recording,
   type RecordingStatus, type UserList,
 } from './model'
@@ -56,8 +61,8 @@ export class DemoBackend implements Backend {
   ]
 
   private deviceList: Device[] = [
-    this.dev('d1', 'Salon (Fire TV)', 'tv', 'Amazon AFTKA', 'Android 11 (API 30)', '1.13.0-beta2', 40, 4 * 60_000),
-    this.dev('d2', 'Vyzo PC (MAISON)', 'pc', 'PC', 'Linux Mint 22.3', '1.13.0-beta2', 40, 40_000),
+    this.dev('d1', 'Salon (Fire TV)', 'tv', 'Amazon AFTKA', 'Android 11 (API 30)', '1.13.0-beta3', 41, 4 * 60_000),
+    this.dev('d2', 'Vyzo PC (MAISON)', 'pc', 'PC', 'Linux Mint 22.3', '1.13.0-beta3', 41, 40_000),
     this.dev('d3', 'Pixel 8', 'mobile', 'Google Pixel 8', 'Android 15 (API 35)', '1.11.8', 33, 3 * D),
   ]
 
@@ -93,7 +98,7 @@ export class DemoBackend implements Backend {
 
   private dev(id: string, name: string, kind: Device['kind'], model: string, system: string, appVersion: string, versionCode: number, ago: number): Device {
     return {
-      id, name, kind, model, system, appVersion, versionCode, lastSeenAt: this.now - ago,
+      id, name, label: '', kind, model, system, appVersion, versionCode, lastSeenAt: this.now - ago,
       updateRequestedAt: 0, updateStatus: '', updateStatusAt: 0,
     }
   }
@@ -272,7 +277,7 @@ export class DemoBackend implements Backend {
   }
 
   async latestVersion() {
-    return { versionCode: 40, versionName: '1.13.0-beta2' }
+    return { versionCode: 41, versionName: '1.13.0-beta3' }
   }
 
   async requestUpdate(d: Device) {
@@ -288,7 +293,7 @@ export class DemoBackend implements Backend {
     steps.forEach((text, i) => setTimeout(() => {
       cur.updateStatus = text
       cur.updateStatusAt = Date.now()
-      if (i === steps.length - 1) { cur.appVersion = '1.13.0-beta2'; cur.versionCode = 40; cur.lastSeenAt = Date.now() }
+      if (i === steps.length - 1) { cur.appVersion = '1.13.0-beta3'; cur.versionCode = 41; cur.lastSeenAt = Date.now() }
       this.changed('devices')
     }, 1200 * (i + 1)))
   }
@@ -357,5 +362,176 @@ export class DemoBackend implements Backend {
     await this.wait(250)
     this.prefs[playlistId] = withCategoryLock(this.prefs[playlistId] ?? { categories: [], channels: [] }, rest, locked)
     this.changed('sealed_items')
+  }
+
+  // ---------------------------------------------------------------- 1.13.0-beta3
+
+  private liveListeners = new Set<(m: LiveMessage) => void>()
+  private playing = new Map<string, PlaybackState>([
+    ['d1', { state: 'playing', title: 'Dune : deuxième partie', detail: '', kind: 'movie', positionMs: 74 * 60_000, durationMs: 166 * 60_000, profile: 'Yannick', receivedAt: Date.now() }],
+    ['d2', { state: 'idle', title: '', detail: '', kind: '', positionMs: 0, durationMs: 0, profile: 'Yannick', receivedAt: Date.now() }],
+  ])
+  private rules = new Map<string, ScreenTimeRule>([
+    ['p3', { enabled: true, dailyMinutes: 90, from: '07:30', to: '20:00', weekendFrom: '08:00', weekendTo: '21:00' }],
+  ])
+  private eventList: AccountEvent[] = [
+    { id: 6, at: this.now - 12 * 60_000, kind: 'site_signin', detail: 'Firefox · Linux' },
+    { id: 5, at: this.now - 3 * H, kind: 'recording_added', detail: 'Le Journal de 20h · TF1 HD' },
+    { id: 4, at: this.now - 26 * H, kind: 'device_updated', detail: 'Salon (Fire TV) · 1.13.0-beta3' },
+    { id: 3, at: this.now - 2 * D, kind: 'parental_changed', detail: '' },
+    { id: 2, at: this.now - 5 * D, kind: 'device_added', detail: 'Pixel 8' },
+    { id: 1, at: this.now - 9 * D, kind: 'playlist_added', detail: '' },
+  ]
+
+  private emit(m: Partial<LiveMessage> & { type: string }, ms = 500) {
+    setTimeout(() => { for (const l of this.liveListeners) l({ device: '', req: '', box: '', action: '', ...m }) }, ms)
+  }
+
+  private log(kind: string, detail = '') {
+    this.eventList.unshift({ id: Date.now(), at: Date.now(), kind, detail })
+  }
+
+  async renameDevice(d: Device, label: string) {
+    await this.wait()
+    const x = this.deviceList.find((y) => y.id === d.id)
+    if (x) x.label = label.trim()
+    this.log('device_renamed', label.trim() || d.name)
+    this.changed('devices')
+  }
+
+  onLive(listener: (m: LiveMessage) => void) {
+    this.liveListeners.add(listener)
+    return () => { this.liveListeners.delete(listener) }
+  }
+
+  async checkNow(_account: Account, d: Device) {
+    const req = requestId()
+    this.emit({ type: 'device_ack', device: d.id, req, action: 'check' }, 300)
+    this.emit({ type: 'device_ack', device: d.id, req, action: 'check_done' }, 2200)
+    return req
+  }
+
+  async sendMessage(_account: Account, d: Device) {
+    const req = requestId()
+    this.emit({ type: 'device_ack', device: d.id, req, action: 'message' }, 600)
+    this.log('message_sent', d.label || d.name)
+    return req
+  }
+
+  async queryPlayback() {
+    for (const id of this.playing.keys()) this.emit({ type: 'playback_state', device: id, box: id }, 300 + Math.random() * 400)
+  }
+
+  async controlPlayback(_account: Account, d: Device, action: PlaybackAction) {
+    const p = this.playing.get(d.id)
+    if (!p) return
+    const pos = p.state === 'playing' ? p.positionMs + Date.now() - p.receivedAt : p.positionMs
+    this.playing.set(d.id, action === 'stop'
+      ? { ...p, state: 'idle', title: '', detail: '', kind: '', positionMs: 0, durationMs: 0, receivedAt: Date.now() }
+      : { ...p, state: action === 'pause' ? 'paused' : 'playing', positionMs: pos, receivedAt: Date.now() })
+    this.emit({ type: 'playback_state', device: d.id, box: d.id }, 700)
+  }
+
+  async openPlayback(_account: Account, box: string) {
+    const p = this.playing.get(box)
+    return p ? { ...p } : null
+  }
+
+  async searchGuide(_account: Account, query: string) {
+    await this.wait(1200)
+    const q = query.toLowerCase()
+    const day = new Date(this.now)
+    day.setHours(0, 0, 0, 0)
+    const base = day.getTime()
+    const all: GuideResult[] = [
+      { channelKey: 'demo:tf1', channel: 'TF1 HD', title: 'Le Journal de 20h', start: base + D + 20 * H, stop: base + D + 20.6 * H, desc: 'L’actualité du jour.' },
+      { channelKey: 'demo:tf1', channel: 'TF1 HD', title: 'Le Journal de 20h', start: base + 2 * D + 20 * H, stop: base + 2 * D + 20.6 * H, desc: '' },
+      { channelKey: 'demo:f2', channel: 'France 2', title: 'Journal de 13h', start: base + D + 13 * H, stop: base + D + 13.7 * H, desc: '' },
+      { channelKey: 'demo:arte', channel: 'Arte', title: 'Le Dessous des cartes', start: base + D + 19.75 * H, stop: base + D + 20 * H, desc: 'Géopolitique.' },
+      { channelKey: 'demo:c+s', channel: 'Canal+ Sport', title: 'Ligue 1 : Lyon – Lens', start: base + 2 * D + 21 * H, stop: base + 2 * D + 23 * H, desc: '' },
+    ]
+    return mergeGuide([all.filter((g) => g.title.toLowerCase().includes(q) || g.channel.toLowerCase().includes(q))])
+  }
+
+  async scheduleRecording(g: GuideResult) {
+    await this.wait()
+    this.recordingList.unshift({
+      id: recordingId(g), channelKey: g.channelKey, channelName: g.channel, title: g.title, startMs: g.start, stopMs: g.stop,
+      status: 'SCHEDULED', error: '', sender: 'Vyzo Web', updatedAt: Date.now(),
+    })
+    this.log('recording_added', `${g.title} · ${g.channel}`)
+    this.changed('recordings')
+  }
+
+  async screenTime() {
+    await this.wait()
+    return new Map([...this.rules].map(([k, v]) => [k, { ...v }]))
+  }
+
+  async saveScreenTime(_account: Account, profileId: string, rule: ScreenTimeRule | null) {
+    await this.wait()
+    if (rule) this.rules.set(profileId, { ...rule })
+    else this.rules.delete(profileId)
+    this.log('screentime_changed')
+    this.changed('sealed_items')
+  }
+
+  async usage(): Promise<UsageDay[]> {
+    await this.wait()
+    const out: UsageDay[] = []
+    const titles = [['Dune : deuxième partie', 'movie'], ['Le Bureau des légendes', 'episode'], ['France 24', 'live'], ['TF1 HD', 'live'],
+      ['Vice-versa 2', 'movie'], ['Bluey', 'episode'], ['Engrenages', 'episode']] as const
+    let seed = 7
+    const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280
+    for (let i = 0; i < 30; i++) {
+      for (const [profile, device, scale] of [['p1', 'd1', 1], ['p1', 'd3', 0.3], ['p3', 'd1', 0.8], ['p2', 'd1', 0.5]] as const) {
+        if (rnd() < 0.25) continue
+        const items = titles.filter(() => rnd() < 0.4).map(([t]) => ({ t, ms: Math.round(rnd() * 70 * scale) * 60_000 })).filter((x) => x.ms > 0)
+        if (!items.length) continue
+        const u: UsageDay = { profile, device, day: dayKey(this.now - i * D), totalMs: 0, liveMs: 0, movieMs: 0, episodeMs: 0, otherMs: 0, items }
+        for (const it of items) {
+          const kind = titles.find(([t]) => t === it.t)![1]
+          u.totalMs += it.ms
+          if (kind === 'live') u.liveMs += it.ms
+          else if (kind === 'movie') u.movieMs += it.ms
+          else u.episodeMs += it.ms
+        }
+        out.push(u)
+      }
+    }
+    return out
+  }
+
+  async events() {
+    await this.wait()
+    return this.eventList.map((e) => ({ ...e }))
+  }
+
+  async logEvent(kind: string, detail = '') {
+    this.log(kind, detail)
+  }
+
+  async exportBackup(): Promise<{ file: string; counts: BackupCounts }> {
+    await this.wait(900)
+    const data: BackupData = {
+      createdAt: Date.now(), profiles: this.profileList.map((p) => ({ ...p })), lists: this.listRows.map((l) => ({ ...l })),
+      items: this.itemRows.map((i) => ({ ...i })), progress: this.progressList.map((p) => ({ ...p })), recordings: [],
+      sealed: this.playlistList.map((p) => ({ kind: 'playlist', id: p.id, plain: '{}' })),
+    }
+    this.log('backup_export')
+    return { file: JSON.stringify({ format: 'vyzo-backup', version: 1, createdAt: data.createdAt, salt: 'AAAA', iterations: 600000, box: 'demo', demo: data }), counts: backupCounts(data) }
+  }
+
+  async readBackup(text: string, password: string) {
+    await this.wait(900)
+    const o = JSON.parse(text) as { format?: string; demo?: BackupData }
+    if (o.format !== 'vyzo-backup') throw new UserError('Ce fichier n’est pas une sauvegarde Vyzo')
+    return password === 'demo' && o.demo ? o.demo : null
+  }
+
+  async restoreBackup(_account: Account, data: BackupData) {
+    await this.wait(900)
+    this.log('backup_restore')
+    return backupCounts(data)
   }
 }

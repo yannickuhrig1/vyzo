@@ -57,6 +57,8 @@ class RealtimeClient(
     private val onHistoryClear: ((HistoryClearEvent) -> Unit)? = null,
     /** Contenus retirés de l'historique d'un profil (site du compte) : profil, clés de contenu. */
     private val onHistoryRemove: ((String, List<String>) -> Unit)? = null,
+    /** Autres messages du canal (commandes du site du compte et réponses des appareils) : type, contenu. */
+    private val onBroadcast: ((String, JsonObject) -> Unit)? = null,
     private val heartbeatMs: Long = HEARTBEAT_MS,
     private val tokenRefreshMs: Long = TOKEN_REFRESH_MS,
 ) {
@@ -250,6 +252,8 @@ class RealtimeClient(
                                 onHistoryClear?.invoke(ev)
                             }
                         }
+                    } else if (!type.isNullOrBlank() && p != null) {
+                        runCatching { onBroadcast?.invoke(type, p) }
                     }
                 }
                 event == "postgres_changes" -> {
@@ -314,6 +318,17 @@ class RealtimeClient(
         }
         val msg = message(topic ?: return false, "broadcast", payload)
         return ws.send(msg)
+    }
+
+    /** Diffuse un message à plat `{type, …}` aux autres appareils du compte et au site. */
+    fun broadcast(type: String, body: JsonObject): Boolean {
+        val ws = socket ?: return false
+        val payload = buildJsonObject {
+            put("type", "broadcast")
+            put("event", "broadcast")
+            put("payload", JsonObject(body + ("type" to kotlinx.serialization.json.JsonPrimitive(type))))
+        }
+        return ws.send(message(topic ?: return false, "broadcast", payload))
     }
 
     private fun message(topic: String, event: String, payload: JsonObject, ref: String = this.ref.incrementAndGet().toString(), joinRef: String? = null): String =
