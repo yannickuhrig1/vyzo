@@ -4,8 +4,9 @@ import {
   type PasswordResetResult, type VaultStatus,
 } from './backend'
 import {
-  dayKey, mergeGuide, nextUpdatedAt, recordingId, withCategoryLock,
-  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
+  DEFAULT_SYNCED_SETTINGS, dayKey, epgSourceId, mergeGuide, nextUpdatedAt, recordingId, sortEpgSources, withCategoryLock,
+  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type EpgDraft, type EpgSource,
+  type GuideResult, type PlaybackState, type ScreenTimeRule, type SyncedSettings, type UsageDay,
   type CatalogEntry, type Device, type Parental, type SealedPrefs, type ListItem, type Playlist, type Profile, type ProfileActivity, type ProgressItem, type Recording,
   type RecordingStatus, type UserList,
 } from './model'
@@ -129,8 +130,9 @@ export class DemoBackend implements Backend {
     await this.lockVault()
   }
 
-  watch(_account: Account, onChange: (table: Table) => void) {
+  watch(_account: Account, onChange: (table: Table) => void, onStatus?: (status: 'connecting' | 'connected' | 'offline') => void) {
     this.listeners.add(onChange)
+    onStatus?.('connected')
     return () => { this.listeners.delete(onChange) }
   }
 
@@ -274,6 +276,15 @@ export class DemoBackend implements Backend {
     this.changed('user_lists')
   }
 
+  async saveLists(lists: UserList[]) {
+    await this.wait()
+    for (const list of lists) {
+      const i = this.listRows.findIndex((l) => l.id === list.id && l.profileId === list.profileId)
+      if (i >= 0) this.listRows[i] = { ...list }
+    }
+    this.changed('user_lists')
+  }
+
   async deleteList(list: UserList) {
     await this.wait()
     this.listRows = this.listRows.filter((l) => !(l.id === list.id && l.profileId === list.profileId))
@@ -284,6 +295,19 @@ export class DemoBackend implements Backend {
   async removeListItem(item: ListItem) {
     await this.wait()
     this.itemRows = this.itemRows.filter((x) => !(x.listId === item.listId && x.profileId === item.profileId && x.contentKey === item.contentKey))
+    this.changed('list_items')
+  }
+
+  async moveListItem(item: ListItem, targetListId: string, position = item.position) {
+    await this.wait()
+    if (item.listId === targetListId) return
+    this.itemRows = this.itemRows.filter((x) => !(x.profileId === item.profileId && x.listId === targetListId && x.contentKey === item.contentKey))
+    const cur = this.itemRows.find((x) => x.profileId === item.profileId && x.listId === item.listId && x.contentKey === item.contentKey)
+    if (cur) {
+      cur.listId = targetListId
+      cur.position = position
+      cur.updatedAt = nextUpdatedAt(cur.updatedAt)
+    }
     this.changed('list_items')
   }
 
@@ -302,6 +326,13 @@ export class DemoBackend implements Backend {
   async removeRecording(r: Recording) {
     await this.wait()
     this.recordingList = this.recordingList.filter((o) => o.id !== r.id)
+    this.changed('recordings')
+  }
+
+  async removeRecordings(recordings: Recording[]) {
+    await this.wait()
+    const ids = new Set(recordings.map((r) => r.id))
+    this.recordingList = this.recordingList.filter((o) => !ids.has(o.id))
     this.changed('recordings')
   }
 
@@ -366,8 +397,26 @@ export class DemoBackend implements Backend {
 
   private parentalValue: Parental | null = null
   private prefs: Record<string, SealedPrefs> = {
-    a94c7edf66d1: { categories: [{ rest: 'C:L:12', hidden: false, position: null, locked: true, name: '' }], channels: [] },
+    a94c7edf66d1: {
+      categories: [
+        { rest: 'C:L:12', hidden: false, position: null, locked: true, name: '' },
+        { rest: 'C:L:14', hidden: true, position: null, locked: null, name: '' },
+      ],
+      channels: [
+        { rest: 'L:101', name: 'TF1 (HD)', number: 1, epgKey: 'TF1.fr', locked: false, hidden: false },
+        { rest: 'L:205', name: 'Canal+ Sport', number: 8, epgKey: 'CanalPlusSport.fr', locked: false, hidden: false },
+      ],
+    },
   }
+  private epgList: EpgSource[] = [
+    { id: 'demo-xmltv-fr', name: 'XMLTV France (TNTTV)', url: 'https://xmltvfr.fr/guide/tvguide.xml', enabled: true, priority: 0, mode: 'FILL', updatedAt: this.now - 3 * D },
+    { id: 'demo-sport-epg', name: 'EPG Sport EU', url: 'https://epg.exemple.net/sport.xml.gz', enabled: true, priority: 1, mode: 'GAPS', updatedAt: this.now - D },
+  ]
+  private keyMap: Record<string, string> = {
+    tmdb: 'demo_tmdb_key_9f8a7b6c5d4e',
+    opensubtitles: 'demo_osub_key_1234',
+  }
+  private settingsValue: SyncedSettings | null = { ...DEFAULT_SYNCED_SETTINGS, autoSkipIntro: true }
 
   async parental() {
     await this.wait()
@@ -389,12 +438,76 @@ export class DemoBackend implements Backend {
       : [['LIVE', 'Toutes les chaînes', false]]
     const letter = { LIVE: 'L', MOVIE: 'M', SERIES: 'S' } as const
     const entries: CatalogEntry[] = names.map(([kind, name, adult], i) => ({ rest: `C:${letter[kind]}:${10 + i}`, name, kind, adult }))
-    return { entries, prefs: this.prefs[playlistId] ?? { categories: [], channels: [] } }
+    const cur = this.prefs[playlistId] ?? { categories: [], channels: [] }
+    return { entries, prefs: { categories: cur.categories.map((c) => ({ ...c })), channels: cur.channels.map((c) => ({ ...c })) } }
   }
 
-  async setCategoryLock(_account: Account, playlistId: string, rest: string, locked: boolean) {
-    await this.wait(250)
-    this.prefs[playlistId] = withCategoryLock(this.prefs[playlistId] ?? { categories: [], channels: [] }, rest, locked)
+  async savePrefs(_account: Account, playlistId: string, update: (current: SealedPrefs) => SealedPrefs) {
+    await this.wait(220)
+    const cur = this.prefs[playlistId] ?? { categories: [], channels: [] }
+    const next = update({ categories: cur.categories.map((c) => ({ ...c })), channels: cur.channels.map((c) => ({ ...c })) })
+    this.prefs[playlistId] = next
+    const pl = this.playlistList.find((p) => p.id === playlistId)
+    if (pl) pl.hasPrefs = next.categories.length > 0 || next.channels.length > 0
+    this.changed('sealed_items')
+    return next
+  }
+
+  async setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean) {
+    await this.savePrefs(account, playlistId, (cur) => withCategoryLock(cur, rest, locked))
+  }
+
+  async epgSources() {
+    await this.wait()
+    return sortEpgSources(this.epgList.map((s) => ({ ...s })))
+  }
+
+  async saveEpgSource(_account: Account, draft: EpgDraft, previous: EpgSource | null, all: EpgSource[]) {
+    await this.wait()
+    const id = await epgSourceId(draft.url)
+    const clash = all.find((s) => s.id === id && s.id !== previous?.id)
+    if (clash) throw new UserError(`Cette source EPG existe déjà (« ${clash.name} »)`)
+    if (previous) this.epgList = this.epgList.filter((s) => s.id !== previous.id)
+    this.epgList.push({ ...draft, name: draft.name.trim(), url: draft.url.trim(), id, updatedAt: Date.now() })
+    this.changed('sealed_items')
+  }
+
+  async saveEpgOrder(_account: Account, sources: EpgSource[]) {
+    await this.wait(150)
+    for (const s of sources) {
+      const cur = this.epgList.find((x) => x.id === s.id)
+      if (cur) { cur.priority = s.priority; cur.updatedAt = nextUpdatedAt(cur.updatedAt) }
+    }
+    this.changed('sealed_items')
+  }
+
+  async deleteEpgSource(_account: Account, s: EpgSource) {
+    await this.wait()
+    this.epgList = this.epgList.filter((x) => x.id !== s.id)
+    this.changed('sealed_items')
+  }
+
+  async apiKeys() {
+    await this.wait()
+    return { ...this.keyMap }
+  }
+
+  async saveApiKey(_account: Account, id: string, value: string) {
+    await this.wait(220)
+    const clean = value.trim()
+    if (clean) this.keyMap[id] = clean
+    else delete this.keyMap[id]
+    this.changed('sealed_items')
+  }
+
+  async syncedSettings() {
+    await this.wait()
+    return this.settingsValue && { ...this.settingsValue }
+  }
+
+  async saveSyncedSettings(_account: Account, next: SyncedSettings) {
+    await this.wait(220)
+    this.settingsValue = { ...next }
     this.changed('sealed_items')
   }
 

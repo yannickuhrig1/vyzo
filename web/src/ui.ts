@@ -87,7 +87,7 @@ export async function act(button: HTMLButtonElement | null, work: () => Promise<
 
 // ------------------------------------------------------------------ Boîtes de dialogue
 
-export function openDialog(content: HTMLElement, kind: '' | 'small' | 'wide' | 'palette' = ''): HTMLDialogElement {
+export function openDialog(content: HTMLElement, kind: '' | 'small' | 'wide' | 'palette' | 'sheet' = ''): HTMLDialogElement {
   const dialog = h('dialog', { class: `dialog ${kind}` }, content)
   // Retirée tout de suite, sans attendre l'événement « close » (différé, voire suspendu dans un onglet caché).
   const close = dialog.close.bind(dialog)

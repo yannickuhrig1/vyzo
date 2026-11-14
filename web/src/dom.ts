@@ -82,6 +82,10 @@ const ICONS: Record<string, string[]> = {
   install: ['M12 3v11', 'M8 10l4 4 4-4', 'M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4'],
   pulse: ['M3 12h4l2-6 4 12 2-6h6'],
   sparkle: ['M12 3v4', 'M12 17v4', 'M3 12h4', 'M17 12h4', 'M6 6l2.5 2.5', 'M15.5 15.5L18 18', 'M18 6l-2.5 2.5', 'M8.5 15.5L6 18'],
+  menu: ['M4 7h16', 'M4 12h16', 'M4 17h16'],
+  dots: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
+  sliders: ['M4 7h9', 'M17 7h3', 'M4 12h3', 'M11 12h9', 'M4 17h11', 'M19 17h1', 'M13 5v4', 'M7 10v4', 'M15 15v4'],
+  globe: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M3 12h18', 'M12 3a14 14 0 0 1 0 18', 'M12 3a14 14 0 0 0 0 18'],
 }
 
 export function icon(name: keyof typeof ICONS | string, size = 18): SVGSVGElement {

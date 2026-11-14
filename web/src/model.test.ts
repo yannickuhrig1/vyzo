@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  cleanAvatar, cleanName, hashPin, isOnline, isValidPin, moveProfile, needsUpdate, nextColor, nextUpdatedAt,
-  PROFILE_PALETTE, profileColor, progressRatio,
+  cleanAvatar, cleanName, hashPin, isOnline, isValidPin, moveProfile, moveUserList, needsUpdate, nextColor, nextUpdatedAt,
+  PROFILE_PALETTE, profileColor, progressRatio, parseXtreamUrl, todayScreenTime, upcomingRecordingAlert, lastBackupAt,
   recordingGroup, statusLabel, updateInProgress, updatePending,
   CAST_MIN_VERSION, castItemType, castReadiness, categoryLocked, hashParental, subscriptionState, withCategoryLock,
-  type CatalogEntry, type Device, type PlaylistStatus, type Profile, type Recording, type SealedPrefs, EMPTY_RULE, checkRule, deviceName, eventText, livePosition, mergeGuide, parsePlayback, parseRule, parseUsage, recordingId, ruleJson, ruleSummary, summarizeUsage, type GuideResult, type UsageDay,
+  withCategoryPref, withChannelPref, removeChannelPref, prefsJson, parseSealedPrefs,
+  epgSourceId, epgJson, moveEpgSource, DEFAULT_SYNCED_SETTINGS, parseSyncedSettings, settingsJson,
+  compareUsagePeriods, usageByProfile, dayUsageBreakdown, usageToCsv,
+  type CatalogEntry, type Device, type EpgSource, type PlaylistStatus, type Profile, type Recording, type SealedPrefs, type UserList, EMPTY_RULE, checkRule, deviceName, eventText, livePosition, mergeGuide, parsePlayback, parseRule, parseUsage, recordingId, ruleJson, ruleSummary, summarizeUsage, type GuideResult, type UsageDay,
 } from './model'
 
 const profile = (id: string, position: number, colorIndex = 0, avatar = ''): Profile =>
@@ -162,7 +165,7 @@ describe('contrôle parental', () => {
   it('verrouiller garde le reste des préférences, dans l’ordre de l’appli', () => {
     const prefs: SealedPrefs = {
       categories: [{ rest: 'C:L:2', hidden: true, position: 3, locked: null, name: 'Sport' }],
-      channels: [{ rest: 'L:9', name: 'X' }],
+      channels: [{ rest: 'L:9', name: 'X', number: 0, epgKey: '', locked: false, hidden: false }],
     }
     const a = withCategoryLock(prefs, 'C:L:2', true)
     expect(a.categories).toEqual([{ rest: 'C:L:2', hidden: true, position: 3, locked: true, name: 'Sport' }])
@@ -226,5 +229,115 @@ describe('1.13.0-beta3', () => {
   it('journal', () => {
     expect(eventText({ kind: 'device_added' }).label).toBe('Nouvel appareil connecté')
     expect(eventText({ kind: 'inconnu' }).icon).toBe('info')
+  })
+
+  it('détecte un lien Xtream complet (get.php / player_api.php)', () => {
+    expect(parseXtreamUrl('http://iptv.exemple:8080/get.php?username=alice&password=secret&type=m3u_plus'))
+      .toEqual({ url: 'http://iptv.exemple:8080', username: 'alice', password: 'secret' })
+    expect(parseXtreamUrl('https://cdn.host/panel/player_api.php?username=u&password=p'))
+      .toEqual({ url: 'https://cdn.host/panel', username: 'u', password: 'p' })
+    expect(parseXtreamUrl('https://iptv-org.github.io/iptv/fr.m3u')).toBeNull()
+    expect(parseXtreamUrl('http://iptv.exemple:8080/get.php?username=alice')).toBeNull()
+  })
+
+  it('calcule le temps d’écran consommé aujourd’hui et la plage active', () => {
+    const fridayAfternoon = new Date(2026, 10, 13, 15, 0).getTime()
+    const fridayNight = new Date(2026, 10, 13, 22, 0).getTime()
+    const sundayMorning = new Date(2026, 10, 15, 9, 30).getTime()
+    const rows: UsageDay[] = [
+      { profile: 'kid', device: 'tv', day: '2026-11-13', totalMs: 25 * 60_000, liveMs: 0, movieMs: 25 * 60_000, episodeMs: 0, otherMs: 0, items: [] },
+      { profile: 'kid', device: 'tab', day: '2026-11-13', totalMs: 20 * 60_000, liveMs: 0, movieMs: 0, episodeMs: 20 * 60_000, otherMs: 0, items: [] },
+      { profile: 'kid', device: 'tv', day: '2026-11-12', totalMs: 90 * 60_000, liveMs: 0, movieMs: 0, episodeMs: 0, otherMs: 0, items: [] },
+    ]
+    const rule = { enabled: true, dailyMinutes: 60, from: '08:00', to: '20:30', weekendFrom: '09:00', weekendTo: '21:30' }
+    const s = todayScreenTime(rows, 'kid', rule, fridayAfternoon)!
+    expect(s.usedMs).toBe(45 * 60_000)
+    expect(s.remainingMs).toBe(15 * 60_000)
+    expect(s.ratio).toBe(0.75)
+    expect(s.exceeded).toBe(false)
+    expect(s.inWindow).toBe(true)
+    expect(s.windowLabel).toBe('08:00 – 20:30')
+
+    expect(todayScreenTime(rows, 'kid', rule, fridayNight)?.inWindow).toBe(false)
+    expect(todayScreenTime(rows, 'kid', rule, sundayMorning)?.windowLabel).toBe('09:00 – 21:30')
+    expect(todayScreenTime(rows, 'kid', EMPTY_RULE, fridayAfternoon)).toBeNull()
+  })
+
+  it('signale un enregistrement imminent si aucun Vyzo PC n’est en ligne', () => {
+    const now = 1_000_000
+    const pcOffline = { id: 'pc', name: 'PC', label: '', kind: 'pc', model: '', system: '', appVersion: '', versionCode: 41, lastSeenAt: now - 30 * 60_000, updateRequestedAt: 0, updateStatus: '', updateStatusAt: 0 } as Device
+    const pcOnline = { ...pcOffline, lastSeenAt: now - 10_000 }
+    const soon = rec('SCHEDULED', now + 30 * 60_000, now + 90 * 60_000)
+    const far = { ...rec('SCHEDULED', now + 5 * 3600_000, now + 6 * 3600_000), id: 'far' }
+    expect(upcomingRecordingAlert([far, soon], [pcOffline], now)?.id).toBe('r')
+    expect(upcomingRecordingAlert([far, soon], [pcOnline], now)).toBeNull()
+    expect(upcomingRecordingAlert([far], [pcOffline], now)).toBeNull()
+  })
+
+  it('réordonne les listes personnalisées et lit la dernière sauvegarde', () => {
+    const lists: UserList[] = [
+      { profileId: 'p1', id: 'a', name: 'A', position: 1, updatedAt: 1 },
+      { profileId: 'p1', id: 'b', name: 'B', position: 2, updatedAt: 1 },
+    ]
+    expect(moveUserList(lists, 'b', -1).map((l) => [l.id, l.position])).toEqual([['b', 1], ['a', 2]])
+    expect(lastBackupAt([{ id: 1, at: 100, kind: 'site_signin', detail: '' }])).toBeNull()
+    expect(lastBackupAt([{ id: 1, at: 100, kind: 'backup_export', detail: '' }, { id: 2, at: 500, kind: 'backup_export', detail: '' }])).toBe(500)
+  })
+
+  it('gère les sources EPG (id sha256-24, JSON Kotlin et priorité)', async () => {
+    const id = await epgSourceId('https://xmltvfr.fr/guide/tvguide.xml')
+    expect(id).toHaveLength(24)
+    expect(epgJson({ name: 'XMLTV FR', url: 'https://a/b.xml', enabled: true, priority: 0, mode: 'FILL' }))
+      .toBe('{"name":"XMLTV FR","url":"https://a/b.xml","enabled":true,"priority":0,"mode":"FILL"}')
+    const sources: EpgSource[] = [
+      { id: '1', name: 'A', url: 'https://a', enabled: true, priority: 0, mode: 'FILL', updatedAt: 1 },
+      { id: '2', name: 'B', url: 'https://b', enabled: true, priority: 1, mode: 'GAPS', updatedAt: 1 },
+    ]
+    expect(moveEpgSource(sources, '2', -1).map((s) => [s.id, s.priority])).toEqual([['2', 0], ['1', 1]])
+  })
+
+  it('préserve et nettoie les préférences catégories/chaînes et sérialise SealedSettings dans l’ordre Kotlin', () => {
+    let prefs: SealedPrefs = { categories: [], channels: [] }
+    prefs = withCategoryPref(prefs, 'C:L:1', { hidden: true, name: 'Cinéma' })
+    prefs = withChannelPref(prefs, 'L:101', { name: 'TF1', number: 1, epgKey: 'TF1.fr' })
+    expect(JSON.parse(prefsJson(prefs))).toEqual(parseSealedPrefs(prefsJson(prefs)))
+    prefs = withCategoryPref(prefs, 'C:L:1', { hidden: false, name: '' })
+    prefs = removeChannelPref(prefs, 'L:101')
+    expect(prefs).toEqual({ categories: [], channels: [] })
+
+    const parsed = parseSyncedSettings('{"xtreamFormat":"m3u8","autoSkipRecap":true}')
+    expect(parsed.xtreamFormat).toBe('m3u8')
+    expect(parsed.autoSkipRecap).toBe(true)
+    const keys = Object.keys(JSON.parse(settingsJson(DEFAULT_SYNCED_SETTINGS)))
+    expect(keys[0]).toBe('epgShiftMinutes')
+    expect(keys[keys.length - 1]).toBe('autoSkipRecap')
+    expect(keys).toHaveLength(22)
+  })
+
+  it('calcule comparatif de périodes, répartition par profil, détail du jour et CSV sécurisé', () => {
+    const now = new Date(2026, 10, 14, 15).getTime()
+    const rows: UsageDay[] = [
+      { profile: 'p1', device: 'd1', day: '2026-11-14', totalMs: 3600_000, liveMs: 1200_000, movieMs: 2400_000, episodeMs: 0, otherMs: 0, items: [{ t: 'Dune', ms: 2400_000 }] },
+      { profile: 'p2', device: 'd1', day: '2026-11-14', totalMs: 1800_000, liveMs: 1800_000, movieMs: 0, episodeMs: 0, otherMs: 0, items: [{ t: '=TF1', ms: 1800_000 }] },
+      { profile: 'p1', device: 'd1', day: '2026-11-05', totalMs: 2700_000, liveMs: 2700_000, movieMs: 0, episodeMs: 0, otherMs: 0, items: [] },
+    ]
+    const cmp = compareUsagePeriods(rows, null, 7, now)
+    expect(cmp.currentMs).toBe(5400_000)
+    expect(cmp.previousMs).toBe(2700_000)
+    expect(cmp.deltaPct).toBe(100)
+
+    const p1 = profile('p1', 0)
+    const p2 = profile('p2', 1)
+    const slices = usageByProfile(rows, 7, [p1, p2], now)
+    expect(slices.map((s) => s.profile.id)).toEqual(['p1', 'p2'])
+    expect(Math.round(slices[0].share * 100)).toBe(67)
+
+    const day = dayUsageBreakdown(rows, '2026-11-14', null, [p1, p2])
+    expect(day.totalMs).toBe(5400_000)
+    expect(day.top[0].title).toBe('Dune')
+
+    const csv = usageToCsv(rows, [p1, p2], [])
+    expect(csv.startsWith('\uFEFF')).toBe(true)
+    expect(csv).toContain("'=TF1 (30 min)")
   })
 })

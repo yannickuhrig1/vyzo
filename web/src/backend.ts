@@ -1,8 +1,10 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
 import {
-  BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, cleanAvatar, mergeGuide, nextUpdatedAt,
-  parsePlayback, parseRule, parseUsage, recordingId, ruleJson, withCategoryLock,
-  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
+  BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, cleanAvatar,
+  epgJson, epgSourceId, mergeGuide, nextUpdatedAt, parseEpg, parsePlayback, parseRule, parseSealedPrefs, parseSyncedSettings, parseUsage,
+  prefsJson, recordingId, ruleJson, settingsJson, sortEpgSources, withCategoryLock,
+  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, emailLinkError, type BackupFile, type EpgDraft, type EpgSource,
+  type GuideResult, type PlaybackState, type ScreenTimeRule, type SyncedSettings, type UsageDay,
   type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
   type ProfileActivity, type ProgressItem, type Recording, type RecordingStatus, type UserList,
 } from './model'
@@ -63,7 +65,7 @@ export interface Backend {
   signIn(email: string, password: string, remember?: boolean): Promise<Account>
   signOut(): Promise<void>
   /** Prévient quand une table change ailleurs (appli, autre onglet). Renvoie de quoi arrêter l'écoute. */
-  watch(account: Account, onChange: (table: Table) => void): () => void
+  watch(account: Account, onChange: (table: Table) => void, onStatus?: (status: 'connecting' | 'connected' | 'offline') => void): () => void
 
   vaultStatus(account: Account): Promise<VaultStatus>
   /** false : mauvais mot de passe. */
@@ -114,12 +116,15 @@ export interface Backend {
 
   lists(account: Account, profileId: string): Promise<ListsData>
   saveList(list: UserList): Promise<void>
+  saveLists(lists: UserList[]): Promise<void>
   deleteList(list: UserList): Promise<void>
   removeListItem(item: ListItem): Promise<void>
+  moveListItem(item: ListItem, targetListId: string, position?: number): Promise<void>
 
   recordings(): Promise<Recording[]>
   setRecordingStatus(r: Recording, status: RecordingStatus): Promise<void>
   removeRecording(r: Recording): Promise<void>
+  removeRecordings(recordings: Recording[]): Promise<void>
 
   devices(): Promise<Device[]>
   latestVersion(): Promise<LatestVersion | null>
@@ -139,6 +144,18 @@ export interface Backend {
   /** Catégories d'un abonnement (envoyées par un appareil) et préférences actuelles. */
   catalog(account: Account, playlistId: string): Promise<{ entries: CatalogEntry[]; prefs: SealedPrefs }>
   setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean): Promise<void>
+  savePrefs(account: Account, playlistId: string, update: (current: SealedPrefs) => SealedPrefs): Promise<SealedPrefs>
+
+  epgSources(account: Account): Promise<EpgSource[]>
+  saveEpgSource(account: Account, draft: EpgDraft, previous: EpgSource | null, all: EpgSource[]): Promise<void>
+  saveEpgOrder(account: Account, sources: EpgSource[]): Promise<void>
+  deleteEpgSource(account: Account, s: EpgSource): Promise<void>
+
+  apiKeys(account: Account): Promise<Record<string, string>>
+  saveApiKey(account: Account, id: string, value: string): Promise<void>
+
+  syncedSettings(account: Account): Promise<SyncedSettings | null>
+  saveSyncedSettings(account: Account, next: SyncedSettings): Promise<void>
 
   /** Nom choisi pour un appareil ; vide : celui du système. */
   renameDevice(d: Device, label: string): Promise<void>
@@ -319,22 +336,32 @@ export class SupabaseBackend implements Backend {
     await this.db.auth.signOut({ scope: 'local' })
   }
 
-  watch(account: Account, onChange: (table: Table) => void): () => void {
+  watch(account: Account, onChange: (table: Table) => void, onStatus?: (status: 'connecting' | 'connected' | 'offline') => void): () => void {
     const tables: Table[] = ['profiles', 'watch_progress', 'list_items', 'user_lists', 'recordings', 'devices', 'sealed_items']
+    let closed = false
+    onStatus?.('connecting')
     const run = async () => {
       // Le canal privé « user:<uid> » exige le jeton du compte (migration realtime_canal_prive).
       const { data } = await this.db.auth.getSession()
+      if (closed) return
       if (data.session) await this.db.realtime.setAuth(data.session.access_token)
+      if (closed) return
       let ch = this.db.channel(`user:${account.userId}`, { config: { private: true, broadcast: { self: false } } })
       for (const table of tables) {
         ch = ch.on('postgres_changes', { event: '*', schema: 'public', table, filter: `user_id=eq.${account.userId}` },
           () => onChange(table))
       }
       ch = ch.on('broadcast', { event: 'broadcast' }, (msg) => this.emitLive(msg.payload as Record<string, unknown> | undefined))
-      this.channel = ch.subscribe()
+      this.channel = ch.subscribe((status) => {
+        if (closed) return
+        if (status === 'SUBSCRIBED') onStatus?.('connected')
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') onStatus?.('offline')
+        else onStatus?.('connecting')
+      })
     }
     void run()
     return () => {
+      closed = true
       if (this.channel) void this.db.removeChannel(this.channel)
       this.channel = null
     }
@@ -658,6 +685,17 @@ export class SupabaseBackend implements Backend {
     if (error) throw error
   }
 
+  async saveLists(lists: UserList[]): Promise<void> {
+    const clean = lists.filter((l) => l.id !== FAVORITES_LIST_ID)
+    if (clean.length === 0) return
+    const rows = clean.map((l) => ({
+      profile_id: l.profileId, id: l.id, name: l.name, position: l.position,
+      updated_at: nextUpdatedAt(l.updatedAt), deleted: false,
+    }))
+    const { error } = await this.db.from('user_lists').upsert(rows, { onConflict: 'user_id,profile_id,id' })
+    if (error) throw error
+  }
+
   async deleteList(list: UserList): Promise<void> {
     // Le déclencheur vyzo_list_deleted retire aussi ses éléments sur le serveur.
     const { error } = await this.db.from('user_lists').update({ deleted: true, updated_at: nextUpdatedAt(list.updatedAt) })
@@ -669,6 +707,37 @@ export class SupabaseBackend implements Backend {
     const { error } = await this.db.from('list_items').update({ deleted: true, updated_at: nextUpdatedAt(item.updatedAt) })
       .eq('profile_id', item.profileId).eq('list_id', item.listId).eq('content_key', item.contentKey)
     if (error) throw error
+  }
+
+  async moveListItem(item: ListItem, targetListId: string, position = item.position): Promise<void> {
+    if (item.listId === targetListId) return
+    let meta: string | null | undefined
+    let hasMetaCol = true
+    try {
+      const { data, error } = await this.db.from('list_items').select('meta')
+        .eq('profile_id', item.profileId).eq('list_id', item.listId).eq('content_key', item.contentKey).limit(1)
+      if (error) {
+        if (missingMeta(error)) hasMetaCol = false
+        else throw error
+      } else {
+        meta = (data as { meta?: string | null }[] | null)?.[0]?.meta
+      }
+    } catch (e) {
+      if (missingMeta(e as { code?: string })) hasMetaCol = false
+      else throw e
+    }
+    const ts = nextUpdatedAt(item.updatedAt)
+    const row: Record<string, unknown> = {
+      profile_id: item.profileId, list_id: targetListId, content_key: item.contentKey,
+      kind: item.kind, position, added_at: item.addedAt, updated_at: ts, deleted: false,
+    }
+    if (hasMetaCol && meta !== undefined) row.meta = meta
+    const { error: upsertErr } = await this.db.from('list_items')
+      .upsert(row, { onConflict: 'user_id,profile_id,list_id,content_key' })
+    if (upsertErr) throw upsertErr
+    const { error: delErr } = await this.db.from('list_items').update({ deleted: true, updated_at: ts })
+      .eq('profile_id', item.profileId).eq('list_id', item.listId).eq('content_key', item.contentKey)
+    if (delErr) throw delErr
   }
 
   // ---------------------------------------------------------------- Enregistrements
@@ -691,6 +760,16 @@ export class SupabaseBackend implements Backend {
     const { error } = await this.db.from('recordings')
       .update({ deleted: true, sender: WEB_SENDER, updated_at: nextUpdatedAt(r.updatedAt) }).eq('id', r.id)
     if (error) throw error
+  }
+
+  async removeRecordings(recordings: Recording[]): Promise<void> {
+    for (let i = 0; i < recordings.length; i += 100) {
+      const chunk = recordings.slice(i, i + 100)
+      const ts = Math.max(Date.now(), ...chunk.map((r) => r.updatedAt + 1))
+      const { error } = await this.db.from('recordings')
+        .update({ deleted: true, sender: WEB_SENDER, updated_at: ts }).in('id', chunk.map((r) => r.id))
+      if (error) throw error
+    }
   }
 
   // ---------------------------------------------------------------- Appareils
@@ -840,14 +919,92 @@ export class SupabaseBackend implements Backend {
       this.sealedRow(account, 'catalog', playlistId), this.sealedRow(account, 'prefs', playlistId),
     ])
     const entries = catalog ? ((JSON.parse(catalog) as { categories?: CatalogEntry[] }).categories ?? []) : []
-    return { entries, prefs: prefs ? { ...EMPTY_PREFS, ...(JSON.parse(prefs) as SealedPrefs) } : EMPTY_PREFS }
+    return { entries, prefs: prefs ? parseSealedPrefs(prefs) : EMPTY_PREFS }
+  }
+
+  async savePrefs(account: Account, playlistId: string, update: (current: SealedPrefs) => SealedPrefs): Promise<SealedPrefs> {
+    // Relu juste avant d'écrire : un appareil a pu changer d'autres préférences entre-temps.
+    const text = await this.sealedRow(account, 'prefs', playlistId)
+    const current = text ? parseSealedPrefs(text) : EMPTY_PREFS
+    const next = update(current)
+    const empty = next.categories.length === 0 && next.channels.length === 0
+    await this.writeSealed(account, 'prefs', playlistId, empty ? null : prefsJson(next))
+    return next
   }
 
   async setCategoryLock(account: Account, playlistId: string, rest: string, locked: boolean): Promise<void> {
-    // Relu juste avant d'écrire : un appareil a pu changer d'autres préférences entre-temps.
-    const text = await this.sealedRow(account, 'prefs', playlistId)
-    const current = text ? { ...EMPTY_PREFS, ...(JSON.parse(text) as SealedPrefs) } : EMPTY_PREFS
-    await this.writeSealed(account, 'prefs', playlistId, JSON.stringify(withCategoryLock(current, rest, locked)))
+    await this.savePrefs(account, playlistId, (current) => withCategoryLock(current, rest, locked))
+  }
+
+  async epgSources(account: Account): Promise<EpgSource[]> {
+    const out: EpgSource[] = []
+    for (const r of await this.openRows(account, 'epg')) {
+      try {
+        out.push({ ...parseEpg(r.text), id: r.id, updatedAt: r.updatedAt })
+      } catch {
+        // bloc illisible ignoré
+      }
+    }
+    return sortEpgSources(out)
+  }
+
+  async saveEpgSource(account: Account, draft: EpgDraft, previous: EpgSource | null, all: EpgSource[]): Promise<void> {
+    const key = this.key(account)
+    const url = draft.url.trim()
+    const clean: EpgDraft = { ...draft, name: draft.name.trim(), url }
+    const id = await epgSourceId(url)
+    const clash = all.find((s) => s.id === id && s.id !== previous?.id)
+    if (clash) throw new UserError(`Cette source EPG existe déjà (« ${clash.name} »)`)
+    const now = Date.now()
+    const rows: { kind: string; id: string; payload: string; updated_at: number; deleted: boolean }[] = [{
+      kind: 'epg', id, deleted: false, updated_at: nextUpdatedAt(previous?.id === id ? previous.updatedAt : 0, now),
+      payload: await seal(key, epgJson(clean), context(account.userId, 'epg', id)),
+    }]
+    if (previous && previous.id !== id) {
+      rows.push({ kind: 'epg', id: previous.id, payload: '', deleted: true, updated_at: nextUpdatedAt(previous.updatedAt, now) })
+    }
+    const { error } = await this.db.from('sealed_items').upsert(rows, { onConflict: 'user_id,kind,id' })
+    if (error) throw error
+  }
+
+  async saveEpgOrder(account: Account, sources: EpgSource[]): Promise<void> {
+    if (sources.length === 0) return
+    const key = this.key(account)
+    const now = Date.now()
+    const rows = await Promise.all(sources.map(async (s) => ({
+      kind: 'epg', id: s.id, deleted: false, updated_at: nextUpdatedAt(s.updatedAt, now),
+      payload: await seal(key, epgJson(s), context(account.userId, 'epg', s.id)),
+    })))
+    const { error } = await this.db.from('sealed_items').upsert(rows, { onConflict: 'user_id,kind,id' })
+    if (error) throw error
+  }
+
+  async deleteEpgSource(account: Account, s: EpgSource): Promise<void> {
+    this.key(account)
+    const { error } = await this.db.from('sealed_items')
+      .upsert({ kind: 'epg', id: s.id, payload: '', deleted: true, updated_at: nextUpdatedAt(s.updatedAt) }, { onConflict: 'user_id,kind,id' })
+    if (error) throw error
+  }
+
+  async apiKeys(account: Account): Promise<Record<string, string>> {
+    const rows = await this.openRows(account, 'key')
+    const out: Record<string, string> = {}
+    for (const r of rows) out[r.id] = r.text
+    return out
+  }
+
+  async saveApiKey(account: Account, id: string, value: string): Promise<void> {
+    const clean = value.trim()
+    await this.writeSealed(account, 'key', id, clean || null)
+  }
+
+  async syncedSettings(account: Account): Promise<SyncedSettings | null> {
+    const text = await this.sealedRow(account, 'settings', 'main')
+    return text ? parseSyncedSettings(text) : null
+  }
+
+  async saveSyncedSettings(account: Account, next: SyncedSettings): Promise<void> {
+    await this.writeSealed(account, 'settings', 'main', settingsJson(next))
   }
 
   // ---------------------------------------------------------------- Commandes aux appareils
@@ -951,13 +1108,13 @@ export class SupabaseBackend implements Backend {
 
   // ---------------------------------------------------------------- Temps d'écran, statistiques
 
-  private async openRows(account: Account, kind: string): Promise<{ id: string; text: string }[]> {
+  private async openRows(account: Account, kind: string): Promise<{ id: string; text: string; updatedAt: number }[]> {
     const key = this.key(account)
     const rows = await this.selectAll<SealedRow>('sealed_items', 'kind,id,payload,updated_at', (q) => q.eq('kind', kind).eq('deleted', false))
-    const out: { id: string; text: string }[] = []
+    const out: { id: string; text: string; updatedAt: number }[] = []
     for (const r of rows) {
       try {
-        out.push({ id: r.id, text: await openText(key, r.payload, context(account.userId, kind, r.id)) })
+        out.push({ id: r.id, text: await openText(key, r.payload, context(account.userId, kind, r.id)), updatedAt: Number(r.updated_at) })
       } catch {
         // Illisible (clé remplacée) : ignoré.
       }
