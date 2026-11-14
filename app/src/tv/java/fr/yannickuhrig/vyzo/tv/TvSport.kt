@@ -81,7 +81,7 @@ object SportKinds {
         kind("Sports de combat", """\b(ufc|boxe|boxing|wwe|mma|catch|wrestling|kickboxing|judo)\b"""),
         kind("Golf", """\b(golf|pga|masters)\b"""),
         kind("Handball et volley", """\b(handball|volley(ball)?)\b"""),
-        kind("Rugby", """\b(rugby|top\s?14|pro\s?d2|six\s+nations|tournoi\s+des\s+6\s+nations)\b"""),
+        kind("Rugby", """\b(rugby|top\s?14|pro\s?d2|six\s+nations|6\s?nations|vi\s+nations|nations\s+championship|autumn\s+(nations|internationals)|test[-\s]?matchs?|xv\s+de\s+france|champions\s+cup|challenge\s+cup|super\s+rugby|rugby\s+championship|united\s+rugby(\s+championship)?|gallagher\s+prem(iership)?|premiership\s+rugby|super\s+league|british\s+and\s+irish\s+lions)\b"""),
         kind("Cyclisme", """\b(cyclisme|tour\s+de\s+france|giro|vuelta|cycling|paris[-\s]roubaix)\b"""),
         kind("Sports d'hiver", """\b(biathlon|ski\s+alpin|ski|saut\s+[àa]\s+ski|snowboard|patinage)\b"""),
         kind("Athlétisme", """\b(athl[ée]tisme|marathon|diamond\s?league)\b"""),
@@ -93,8 +93,9 @@ object SportKinds {
 
     fun name(index: Int): String = KINDS.getOrNull(index)?.name ?: "Autres"
 
-    fun of(title: String, channel: String): Int {
+    fun of(title: String, channel: String, category: String = ""): Int {
         KINDS.forEachIndexed { i, k -> if (k.re.containsMatchIn(title)) return i }
+        if (category.isNotBlank()) KINDS.forEachIndexed { i, k -> if (k.re.containsMatchIn(category)) return i }
         KINDS.forEachIndexed { i, k -> if (k.re.containsMatchIn(channel)) return i }
         return OTHER
     }
@@ -131,7 +132,7 @@ class SportView(
 )
 
 fun sportView(state: SportState, window: SportWindow, kind: Int, now: Long): SportView {
-    fun kindOf(e: SportEvent) = SportKinds.of(e.program.title, e.channels.first().name)
+    fun kindOf(e: SportEvent) = SportKinds.of(e.program.title, e.channels.first().name, e.program.category)
     val live = if (window.showsLive) state.live else emptyList()
     val upcoming = state.upcoming.filter { window.matches(it.program.start, now) }
     val counts = (live + upcoming).groupingBy { kindOf(it) }.eachCount()
@@ -167,7 +168,7 @@ fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, Program
     Box(Modifier.fillMaxSize().background(Bg)) {
         when {
             s == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            s.channels.isEmpty() -> EmptyState(
+            s.channels.isEmpty() && s.live.isEmpty() && s.upcoming.isEmpty() -> EmptyState(
                 "Aucune chaîne de sport trouvée",
                 "Vyzo les reconnaît au nom de leur catégorie ou de la chaîne (« Sports », « beIN SPORTS », « RMC Sport »…).",
                 Icons.Default.SportsSoccer, Modifier.fillMaxSize(),
@@ -188,7 +189,7 @@ fun TvSport(onWatch: (ChannelEntity) -> Unit, onCatchup: (ChannelEntity, Program
                     item(key = "head") {
                         Row(Modifier.padding(start = dpx(12)), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
                             Text("Sport", color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1)
-                            Text(channelCount(s.channels.size), color = Tok.TextLow, fontSize = spx(17), maxLines = 1)
+                            if (s.channels.isNotEmpty()) Text(channelCount(s.channels.size), color = Tok.TextLow, fontSize = spx(17), maxLines = 1)
                         }
                         if (!hasEvents) {
                             Text("Aucun match en cours ni annoncé d'après le guide TV.", color = Tok.TextLow, fontSize = spx(18), modifier = Modifier.padding(start = dpx(12), top = dpx(10)))

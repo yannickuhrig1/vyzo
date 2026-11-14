@@ -97,6 +97,7 @@ fun TraktScreen() {
         TextInputDialog(
             field.title,
             initial = if (field == TraktField.ID) settings.traktClientId else settings.traktClientSecret,
+            hint = "Application créée sur trakt.tv/oauth/applications/new avec comme Redirect URI : urn:ietf:wg:oauth:2.0:oob",
             onConfirm = { text ->
                 val value = text.trim()
                 scope.launch {

@@ -150,7 +150,7 @@ class TvNavLogicTest {
         assertEquals("12 chaînes", channelCount(12))
     }
 
-    private fun kind(title: String, channel: String = "") = SportKinds.name(SportKinds.of(title, channel))
+    private fun kind(title: String, channel: String = "", category: String = "") = SportKinds.name(SportKinds.of(title, channel, category))
 
     @Test fun `discipline d un programme`() {
         assertEquals("Football", kind("Football : Ligue des champions"))
@@ -159,6 +159,11 @@ class TvNavLogicTest {
         assertEquals("Cyclisme", kind("Cyclisme : Tour de France"))
         assertEquals("Sports d'hiver", kind("Ski alpin : Coupe du monde"))
         assertEquals("Le titre l'emporte sur la chaîne", "Rugby", kind("Rugby : Top 14", "Golf Channel"))
+        assertEquals("Rugby", kind("Nations Championship : Pays de Galles / Nouvelle-Zélande", "TF1 HD"))
+        assertEquals("Rugby", kind("Test-match : France - Fidji", "TF1 HD"))
+        assertEquals("Rugby", kind("Champions Cup : Toulouse - Leinster", "beIN Sports 1"))
+        assertEquals("Rugby", kind("6 Nations : France - Irlande", "France 2"))
+        assertEquals("Rugby", kind("Pays de Galles / Nouvelle-Zélande", "TF1 HD", category = "Rugby"))
         assertEquals("Golf", kind("Magazine", "Golf Channel"))
         assertEquals("Sports mécaniques", kind("Moto GP"))
         assertEquals("Autres", kind("Magazine", "Eurosport 1"))
@@ -216,6 +221,14 @@ class TvNavLogicTest {
 
         val gone = sportView(state, SportWindow.LATER, footIndex, noon)
         assertEquals("La discipline choisie reste affichée même sans match", footIndex to 0, gone.kinds.first { it.first == footIndex })
+
+        val tf1Rugby = event("Nations Championship : Pays de Galles / Nouvelle-Zélande", noon - hour / 2, ch = "TF1 HD")
+        val generalistOnly = SportState(live = listOf(tf1Rugby), upcoming = emptyList(), channels = emptyList())
+        val rugbyIndex = SportKinds.of("Rugby", "")
+        val rugbyView = sportView(generalistOnly, SportWindow.ALL, rugbyIndex, noon)
+        assertEquals(listOf(tf1Rugby), rugbyView.live)
+        assertTrue(rugbyView.channels.isEmpty())
+        assertEquals(listOf(rugbyIndex to 1), rugbyView.kinds)
     }
 
     @Test fun `la variante TV fournit sa navigation`() {

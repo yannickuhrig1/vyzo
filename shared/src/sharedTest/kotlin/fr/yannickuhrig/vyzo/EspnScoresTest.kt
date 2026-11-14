@@ -1,10 +1,15 @@
 package fr.yannickuhrig.vyzo
 
+import fr.yannickuhrig.vyzo.data.db.ChannelEntity
+import fr.yannickuhrig.vyzo.data.db.ProgramEntity
 import fr.yannickuhrig.vyzo.data.sport.EspnGame
 import fr.yannickuhrig.vyzo.data.sport.EspnScores
 import fr.yannickuhrig.vyzo.data.sport.EspnTeam
 import fr.yannickuhrig.vyzo.data.sport.ScoreMatcher
+import fr.yannickuhrig.vyzo.data.sport.SportEvent
+import fr.yannickuhrig.vyzo.data.sport.matchScores
 import fr.yannickuhrig.vyzo.data.sport.parseEspnScoreboard
+import fr.yannickuhrig.vyzo.util.TextNorm
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -108,5 +113,28 @@ class EspnScoresTest {
         time += 1
         scores.games()
         assertEquals(firstRound * 2, calls)
+    }
+
+    @Test
+    fun rugbyNationsAndFrenchClubsAreMatched() {
+        val games = listOf(
+            game(team("Wales", score = "35"), team("New Zealand", score = "28"), detail = "42'"),
+            game(team("Stade Toulousain", score = "24"), team("Bordeaux Begles", score = "17"), state = "post"),
+        )
+        assertEquals("35 - 28 · 42'", ScoreMatcher.find("Rugby : Pays de Galles / Nouvelle-Zélande", start, games)!!.label)
+        assertEquals("28 - 35 · 42'", ScoreMatcher.find("Nouvelle-Zélande - Pays de Galles", start, games)!!.label)
+        assertEquals("24 - 17 · Terminé", ScoreMatcher.find("Top 14 : Toulouse - UBB", start, games)!!.label)
+
+        val tf1 = ChannelEntity(
+            uid = "tf1", playlistId = 1, remoteId = "tf1", name = "TF1", nameNorm = TextNorm.search("TF1"),
+            matchKey = TextNorm.matchKey("TF1"), number = 1, logo = "", categoryUid = "", epgId = "tf1",
+            epgKey = "tf1", streamUrl = "", position = 0, syncToken = 0,
+        )
+        val prog = ProgramEntity(
+            channelKey = "tf1", start = start, stop = start + 7_200_000L, title = "Rugby",
+            description = "Pays de Galles / Nouvelle-Zélande\nEn direct", sourceKey = "t", generation = 1,
+        )
+        val event = SportEvent(prog, listOf(tf1))
+        assertEquals("35 - 28 · 42'", matchScores(listOf(event), games)[event.key]!!.label)
     }
 }

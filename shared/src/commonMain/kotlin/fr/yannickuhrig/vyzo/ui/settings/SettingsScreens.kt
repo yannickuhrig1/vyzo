@@ -322,6 +322,7 @@ fun SettingsScreen(
         TextInputDialog(
             "Clé API OpenSubtitles.com", initial = s.openSubtitlesApiKey, label = "Clé API (laisser vide pour le mode public)",
             placeholder = "Ex : abcdef123456...",
+            hint = "Sur opensubtitles.com (pas .org) → menu du compte → API consumers → NEW CONSUMER. Laisse vide pour le mode public limité.",
             onConfirm = { v -> update { it.copy(openSubtitlesApiKey = v.trim()) } },
             onDismiss = { openSubtitlesDialog = false },
         )
@@ -330,6 +331,7 @@ fun SettingsScreen(
         TextInputDialog(
             "Clé API TheMovieDB (TMDB)", initial = s.tmdbApiKey, label = "Clé API (optionnelle, laisser vide pour le mode de secours)",
             placeholder = "Ex : 32 caractères hexadécimaux...",
+            hint = "Sur themoviedb.org → Paramètres → API : copie la « Clé d'API » (v3 auth, 32 caractères), pas le long jeton d'accès.",
             onConfirm = { v -> update { it.copy(tmdbApiKey = v.trim()) } },
             onDismiss = { tmdbDialog = false },
         )
@@ -338,6 +340,7 @@ fun SettingsScreen(
         TextInputDialog(
             "Clé API OMDb", initial = s.omdbApiKey, label = "Clé personnelle (omdbapi.com)",
             placeholder = "Ex : 8 caractères...",
+            hint = "Demande une clé gratuite (1 000 req/jour) sur omdbapi.com/apikey.aspx puis valide le lien reçu par e-mail.",
             onConfirm = { v -> update { it.copy(omdbApiKey = v.trim()) } },
             onDismiss = { omdbDialog = false },
         )
@@ -345,6 +348,7 @@ fun SettingsScreen(
     if (githubTokenDialog) {
         TextInputDialog(
             "Jeton d'accès GitHub (dépôt privé)", initial = s.githubToken, label = "Token (ghp_...)",
+            hint = "Utile seulement si le dépôt yannickuhrig1/vyzo est privé : GitHub → Settings → Developer settings → Personal access tokens (lecture du dépôt).",
             onConfirm = { v -> update { it.copy(githubToken = v.trim()) } },
             onDismiss = { githubTokenDialog = false },
         )

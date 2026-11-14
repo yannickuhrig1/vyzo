@@ -20,6 +20,12 @@ data class NameRow(val uid: String, val name: String)
 /** Créneau occupé dans le guide d'une chaîne. */
 data class ProgramSlot(val channelKey: String, val start: Long, val stop: Long)
 
+/** Résumé léger d'un programme pour repérer le sport sur l'ensemble des chaînes sans charger les descriptions. */
+data class ProgramScanRow(val id: Long, val channelKey: String, val title: String, val category: String)
+
+/** Description d'un programme candidat quand le titre seul ne suffit pas (« Équipe A - Équipe B »). */
+data class ProgramDescRow(val id: Long, val description: String)
+
 /** Catégories masquées par l'utilisateur. */
 const val HIDDEN_CATEGORIES = "(SELECT hp.uid FROM category_pref hp WHERE hp.hidden = 1)"
 
@@ -258,6 +264,21 @@ interface ChannelDao {
            AND ch.categoryUid NOT IN """ + HIDDEN_CATEGORIES + " AND " + CH_UNLOCKED,
     )
     suspend fun visibleNames(pids: List<Long>, hide: Boolean): List<NameRow>
+
+    /** Clés EPG distinctes des chaînes visibles (y compris généralistes : TF1, France 2…). */
+    @Query(
+        """SELECT DISTINCT ch.epgKey FROM channel ch WHERE ch.playlistId IN (:pids) AND ch.epgKey != ''
+           AND ch.hidden = 0 AND ch.categoryUid NOT IN """ + HIDDEN_CATEGORIES + " AND " + CH_UNLOCKED,
+    )
+    suspend fun visibleEpgKeys(pids: List<Long>, hide: Boolean): List<String>
+
+    /** Chaînes visibles associées à ces clés EPG. */
+    @Query(
+        """SELECT ch.* FROM channel ch WHERE ch.playlistId IN (:pids) AND ch.epgKey IN (:keys)
+           AND ch.hidden = 0 AND ch.categoryUid NOT IN """ + HIDDEN_CATEGORIES + " AND " + CH_UNLOCKED + """
+           ORDER BY ch.position""",
+    )
+    suspend fun visibleByEpgKeys(pids: List<Long>, keys: List<String>, hide: Boolean): List<ChannelEntity>
 
     @Query("SELECT ch.* FROM channel ch WHERE ch.playlistId IN (:pids) AND ch.epgKey = :key AND ch.hidden = 0 AND " + CH_UNLOCKED + " LIMIT 1")
     suspend fun byEpgKey(pids: List<Long>, key: String, hide: Boolean): ChannelEntity?
@@ -588,6 +609,15 @@ interface ProgramDao {
 
     @Query("SELECT * FROM program WHERE channelKey IN (:keys) AND stop > :from AND start < :to ORDER BY start")
     suspend fun window(keys: List<String>, from: Long, to: Long): List<ProgramEntity>
+
+    @Query("SELECT id, channelKey, title, category FROM program WHERE stop > :from AND start < :to ORDER BY start")
+    suspend fun scanWindow(from: Long, to: Long): List<ProgramScanRow>
+
+    @Query("SELECT id, description FROM program WHERE id IN (:ids)")
+    suspend fun descriptionsByIds(ids: List<Long>): List<ProgramDescRow>
+
+    @Query("SELECT * FROM program WHERE id IN (:ids) ORDER BY start")
+    suspend fun byIds(ids: List<Long>): List<ProgramEntity>
 
     @Query("SELECT * FROM program WHERE id = :id")
     suspend fun get(id: Long): ProgramEntity?

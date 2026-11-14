@@ -77,10 +77,44 @@ object ScoreMatcher {
     private val ALIASES = mapOf(
         "paris saint germain" to listOf("psg", "paris sg", "paris st germain"),
         "marseille" to listOf("om"),
-        "lyon" to listOf("ol"),
+        "lyon" to listOf("ol", "lou", "lyon ou"),
         "manchester united" to listOf("man utd", "man united"),
         "manchester city" to listOf("man city"),
         "bayern munich" to listOf("bayern munchen"),
+        "wales" to listOf("pays de galles", "galles"),
+        "new zealand" to listOf("nouvelle zelande", "all blacks"),
+        "south africa" to listOf("afrique du sud", "springboks"),
+        "england" to listOf("angleterre"),
+        "ireland" to listOf("irlande"),
+        "scotland" to listOf("ecosse"),
+        "italy" to listOf("italie"),
+        "argentina" to listOf("argentine", "pumas"),
+        "australia" to listOf("australie", "wallabies"),
+        "japan" to listOf("japon"),
+        "fiji" to listOf("fidji"),
+        "georgia" to listOf("georgie"),
+        "spain" to listOf("espagne"),
+        "germany" to listOf("allemagne"),
+        "belgium" to listOf("belgique"),
+        "netherlands" to listOf("pays bas"),
+        "switzerland" to listOf("suisse"),
+        "romania" to listOf("roumanie"),
+        "united states" to listOf("etats unis", "usa"),
+        "chile" to listOf("chili"),
+        "stade toulousain" to listOf("toulouse"),
+        "bordeaux begles" to listOf("bordeaux", "union bordeaux begles", "ubb"),
+        "montpellier herault" to listOf("montpellier", "mhr"),
+        "stade francais paris" to listOf("stade francais", "sfp"),
+        "castres olympique" to listOf("castres"),
+        "la rochelle" to listOf("stade rochelais"),
+        "bayonne" to listOf("aviron bayonnais"),
+        "pau" to listOf("section paloise"),
+        "perpignan" to listOf("usap"),
+        "toulon" to listOf("rc toulon", "rct"),
+        "clermont" to listOf("asm", "asm clermont", "clermont auvergne"),
+        "clermont auvergne" to listOf("clermont", "asm", "asm clermont"),
+        "benetton treviso" to listOf("trevise", "benetton trevise"),
+        "edinburgh" to listOf("edimbourg"),
     )
 
     private fun words(text: String) = TextNorm.search(text).split(SEPARATORS).filter { it.isNotEmpty() }
@@ -121,7 +155,13 @@ object ScoreMatcher {
 
 /** Score de chacun des [events] retrouvés dans [games], par clé d'événement. */
 fun matchScores(events: List<SportEvent>, games: List<EspnGame>): Map<String, MatchScore> =
-    events.mapNotNull { e -> ScoreMatcher.find(e.program.title, e.program.start, games)?.let { e.key to it } }.toMap()
+    events.mapNotNull { e ->
+        val score = ScoreMatcher.find(e.program.title, e.program.start, games)
+            ?: e.program.description.lineSequence().firstOrNull()
+                ?.takeIf { it.length <= 120 && SportDetector.hasVersus(it) }
+                ?.let { ScoreMatcher.find(it, e.program.start, games) }
+        score?.let { e.key to it }
+    }.toMap()
 
 /**
  * Scores du tableau public d'ESPN. Cette API n'est pas officielle : si elle ne répond plus pendant plusieurs tours,
@@ -182,7 +222,9 @@ class EspnScores(
         val LEAGUES = listOf(
             "soccer/fra.1", "soccer/fra.2", "soccer/uefa.champions", "soccer/uefa.europa", "soccer/uefa.europa.conf",
             "soccer/eng.1", "soccer/esp.1", "soccer/ita.1", "soccer/ger.1",
-            "rugby/270559", "basketball/nba", "football/nfl", "hockey/nhl",
+            "rugby/270559", "rugby/17567", "rugby/180659", "rugby/289234", "rugby/271937", "rugby/272073",
+            "rugby/164205", "rugby/289237", "rugby/244293", "rugby/270557", "rugby/267979", "rugby/242041",
+            "basketball/nba", "football/nfl", "hockey/nhl",
         )
     }
 }

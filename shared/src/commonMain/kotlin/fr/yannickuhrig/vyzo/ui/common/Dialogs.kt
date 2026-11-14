@@ -199,6 +199,7 @@ fun TextInputDialog(
     initial: String = "",
     label: String = "",
     placeholder: String = "",
+    hint: String = "",
     keyboardType: KeyboardType = KeyboardType.Text,
     confirmLabel: String = "Valider",
     onConfirm: (String) -> Unit,
@@ -209,6 +210,9 @@ fun TextInputDialog(
     ZapDialog(onDismiss) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge)
+            if (hint.isNotBlank()) {
+                Text(hint, style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim)
+            }
             OutlinedTextField(
                 value = text, onValueChange = { text = it },
                 label = if (label.isNotBlank()) ({ Text(label) }) else null,

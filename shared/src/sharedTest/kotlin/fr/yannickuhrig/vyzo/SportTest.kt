@@ -38,8 +38,51 @@ class SportTest {
         number = 0, logo = "", categoryUid = "", epgId = epg, epgKey = epg, streamUrl = "", position = pos++, syncToken = 0,
     )
 
-    private fun p(key: String, title: String, start: Long, stop: Long) =
-        ProgramEntity(channelKey = key, start = start, stop = stop, title = title, sourceKey = "t", generation = 1)
+    private fun p(key: String, title: String, start: Long, stop: Long, category: String = "", description: String = "") =
+        ProgramEntity(channelKey = key, start = start, stop = stop, title = title, description = description, category = category, sourceKey = "t", generation = 1)
+
+    @Test
+    fun rugbyAndGeneralChannels() {
+        listOf(
+            "Rugby : Pays de Galles / Nouvelle-Zélande",
+            "Nations Championship : Angleterre - Japon",
+            "Test-match : France / Fidji",
+            "Tournoi des VI Nations : France - Irlande",
+            "XV de France : France - Australie",
+            "Champions Cup : Toulouse - Leinster",
+            "Challenge Cup : Toulon - Scarlets",
+            "Rugby",
+        ).forEach { assertTrue(it, SportDetector.isEvent(it, strict = true)) }
+
+        assertTrue("Pays de Galles / Nouvelle-Zélande", SportDetector.isEvent("Pays de Galles / Nouvelle-Zélande", category = "Sport", strict = true))
+        assertTrue("description rugby", SportDetector.isEvent("Pays de Galles / Nouvelle-Zélande", description = "Rugby. Nations Championship.", strict = true))
+
+        assertFalse("faux positif tiret", SportDetector.isEvent("Joséphine, ange gardien - Un ange", strict = true))
+        assertFalse("faux positif ski", SportDetector.isEvent("Les Bronzés font du ski", strict = true))
+        assertFalse("faux positif match", SportDetector.isEvent("Match Point", strict = true))
+        assertFalse("journal TV", SportDetector.isEvent("Journal de 20h - Édition spéciale", description = "Rugby ce soir", strict = true))
+        assertFalse("documentaire", SportDetector.isEvent("Rugby, la mêlée des géants", category = "Documentaire", strict = true))
+        assertFalse("magazine", SportDetector.isEvent("Téléfoot", category = "Magazine sportif", strict = true))
+        assertFalse("avant-match", SportDetector.isEvent("Avant-match : Pays de Galles / Nouvelle-Zélande", strict = true))
+    }
+
+    @Test
+    fun generalChannelEventsAreMergedWithoutFalsePositives() {
+        val tf1 = ch("TF1 FHD", "tf1")
+        val bein = ch("beIN SPORTS 1", "bein1")
+        val h = 3_600_000L
+        val programs = listOf(
+            p("tf1", "Nations Championship : Pays de Galles / Nouvelle-Zélande", 10 * h, 12 * h, category = "Sport"),
+            p("tf1", "Plus belle la vie - Épisode 100", 12 * h, 13 * h, category = "Série"),
+            p("bein1", "Toulouse - Bordeaux", 10 * h, 12 * h),
+        )
+        val events = SportLineup.events(listOf(tf1, bein), programs, sportChannelUids = setOf(bein.uid))
+        assertEquals(
+            listOf("Nations Championship : Pays de Galles / Nouvelle-Zélande", "Toulouse - Bordeaux"),
+            events.map { it.program.title },
+        )
+        assertEquals(listOf(tf1.uid), events[0].channels.map { it.uid })
+    }
 
     @Test
     fun sameMatchOnSeveralChannelsIsOneEvent() {

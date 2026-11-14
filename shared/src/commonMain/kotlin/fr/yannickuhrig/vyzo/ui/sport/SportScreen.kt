@@ -150,7 +150,7 @@ fun SportScreen(
         s == null -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
         }
-        s.channels.isEmpty() -> EmptyState(
+        s.channels.isEmpty() && s.live.isEmpty() && s.upcoming.isEmpty() -> EmptyState(
             "Aucune chaîne de sport trouvée",
             "Vyzo les reconnaît au nom de leur catégorie ou de la chaîne (« Sports », « beIN SPORTS », « RMC Sport »…).",
             Icons.Default.SportsSoccer, Modifier.fillMaxSize(),
@@ -202,7 +202,7 @@ fun SportScreen(
             items(s.upcoming, key = { "up:" + it.key }) { e ->
                 UpcomingRow(e, side) { programMenu = e.channels.first() to e.program }
             }
-            item(key = "channels") {
+            if (s.channels.isNotEmpty()) item(key = "channels") {
                 Section("Chaînes de sport", side) {
                     LazyRow(contentPadding = PaddingValues(horizontal = side - 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(s.channels, key = { it.key }) { item ->

@@ -17,6 +17,7 @@ import fr.yannickuhrig.vyzo.data.db.MovieEntity
 import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
 import fr.yannickuhrig.vyzo.data.db.PlaylistKeys
 import fr.yannickuhrig.vyzo.data.db.ProgramEntity
+import fr.yannickuhrig.vyzo.data.db.ProgramScanRow
 import fr.yannickuhrig.vyzo.data.db.SeriesEntity
 import fr.yannickuhrig.vyzo.data.db.SourceType
 import fr.yannickuhrig.vyzo.data.db.SyncTombstoneEntity
@@ -245,11 +246,49 @@ class Repository(
             }
     }
 
-    /** Matchs et courses diffusés par [channels] entre [from] et [to], un seul par événement. */
+    /** Matchs et courses diffusés entre [from] et [to] sur les chaînes de sport [channels] et les autres chaînes visibles, un seul par événement. */
     suspend fun sportEvents(channels: List<ChannelEntity>, from: Long, to: Long): List<SportEvent> = withContext(Dispatchers.IO) {
-        val keys = channels.map { it.epgKey }.filter { it.isNotBlank() }.distinct()
-        val programs = keys.chunked(400).flatMap { db.programs().window(it, from, to) }
-        SportLineup.events(channels, programs)
+        val sportKeys = channels.map { it.epgKey }.filter { it.isNotBlank() }.distinct()
+        val sportKeySet = sportKeys.toHashSet()
+        val sportPrograms = sportKeys.chunked(400).flatMap { db.programs().window(it, from, to) }
+
+        val sc = viewScopeNow()
+        val hideLocked = sc.hide || sc.kid
+        val generalKeys = if (sc.pids.isEmpty()) {
+            emptySet()
+        } else {
+            db.channels().visibleEpgKeys(sc.pids, hideLocked).filterTo(HashSet()) { it !in sportKeySet }
+        }
+        if (generalKeys.isEmpty()) return@withContext SportLineup.events(channels, sportPrograms)
+
+        val definiteIds = ArrayList<Long>()
+        val maybeRows = ArrayList<ProgramScanRow>()
+        for (row in db.programs().scanWindow(from, to)) {
+            if (row.channelKey !in generalKeys) continue
+            if (SportDetector.isEvent(row.title, row.category, strict = true)) {
+                definiteIds += row.id
+            } else if (SportDetector.needsDescriptionCheck(row.title, row.category)) {
+                maybeRows += row
+            }
+        }
+        if (maybeRows.isNotEmpty()) {
+            val descById = maybeRows.map { it.id }.chunked(400)
+                .flatMap { db.programs().descriptionsByIds(it) }
+                .associate { it.id to it.description }
+            for (row in maybeRows) {
+                if (SportDetector.isEvent(row.title, row.category, descById[row.id].orEmpty(), strict = true)) {
+                    definiteIds += row.id
+                }
+            }
+        }
+        if (definiteIds.isEmpty()) return@withContext SportLineup.events(channels, sportPrograms)
+
+        val extraPrograms = definiteIds.chunked(400).flatMap { db.programs().byIds(it) }
+        val extraKeys = extraPrograms.map { it.channelKey }.distinct()
+        val extraChannels = extraKeys.chunked(400).flatMap { db.channels().visibleByEpgKeys(sc.pids, it, hideLocked) }
+        val allChannels = (channels + extraChannels).distinctBy { it.uid }.sortedBy { it.position }
+        val sportUids = channels.mapTo(HashSet()) { it.uid }
+        SportLineup.events(allChannels, sportPrograms + extraPrograms, sportUids)
     }
 
     /** Toutes les chaînes d'une catégorie, y compris masquées (personnalisation). */
