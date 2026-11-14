@@ -15,6 +15,7 @@ import {
   statusLabel, subscriptionState, updateInProgress, updatePending,
   EMPTY_RULE, MAX_DEVICE_LABEL, MAX_MESSAGE, SENSITIVE_EVENTS, checkRule, deviceName, eventText, livePosition, minutesLabel, recordingId,
   ruleSummary, summarizeUsage, supportsRemote,
+  MIN_PASSWORD, emailLinkError, parseEmailLink, type EmailLinkParams,
   type AccountEvent, type BackupCounts, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Parental, type SealedPrefs, type Tone, type Device, type LatestVersion, type ListItem, type Playlist, type Profile, type ProfileActivity,
   type ProgressItem, type Recording, type RecordingGroup, type UserList,
@@ -397,20 +398,55 @@ function rememberBox(id: string) {
   return { input, box }
 }
 
-function renderLogin(message?: string) {
+/** Cadre commun des pages sans compte ouvert (connexion, mot de passe oublié, liens reçus par e-mail). */
+function authPage(pageTitle: string, card: HTMLElement) {
   clear(root)
-  document.title = 'Connexion · Vyzo'
-  const email = h('input', { id: 'email', type: 'email', autocomplete: 'username', required: true, spellcheck: 'false' })
+  document.title = `${pageTitle} · Vyzo`
+  card.classList.add('login-card')
+  card.prepend(h('div', { class: 'login-mark' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Vyzo',
+    backend.demo ? h('span', { class: 'demo-tag' }, 'démo') : null))
+  card.append(h('div', { class: 'login-theme' }, themeSwitch()))
+  append(root, [h('main', { class: 'login' }, card)])
+}
+
+/** Bouton qui ressemble à un lien (action secondaire sous un formulaire). */
+const linkButton = (label: string, onclick: () => void) => h('button', { class: 'link-btn', type: 'button', onclick }, label)
+
+/** Envoi pendant lequel le bouton principal est occupé ; renvoie false et affiche l'erreur en cas d'échec. */
+async function busy(button: HTMLButtonElement, error: HTMLElement, work: () => Promise<void>): Promise<boolean> {
+  error.textContent = ''
+  button.disabled = true
+  button.setAttribute('aria-busy', 'true')
+  try {
+    await work()
+    return true
+  } catch (e) {
+    error.textContent = friendlyError(e)
+    return false
+  } finally {
+    button.disabled = false
+    button.removeAttribute('aria-busy')
+  }
+}
+
+const notConfirmed = (e: unknown) => {
+  const err = e as { code?: string; message?: string }
+  return err?.code === 'email_not_confirmed' || /Email not confirmed/i.test(err?.message ?? '')
+}
+
+function renderLogin(message?: string, prefill = '') {
+  const email = h('input', { id: 'email', type: 'email', autocomplete: 'username', required: true, spellcheck: 'false', value: prefill })
   const password = h('input', { id: 'password', type: 'password', autocomplete: 'current-password', required: true })
   const error = h('p', { class: 'form-error', role: 'alert' }, message ?? '')
   const submit = h('button', { class: 'btn primary wide', type: 'submit' }, 'Se connecter')
   const stay = rememberBox('login-remember')
+  const resend = h('div', { class: 'auth-extra', hidden: true })
 
   const form = h('form', {
-    class: 'login-card',
     onsubmit: async (ev: Event) => {
       ev.preventDefault()
       error.textContent = ''
+      resend.hidden = true
       submit.disabled = true
       submit.setAttribute('aria-busy', 'true')
       try {
@@ -419,30 +455,183 @@ function renderLogin(message?: string) {
         await enter(account)
       } catch (e) {
         error.textContent = friendlyError(e)
+        if (notConfirmed(e)) showResend(email.value)
         submit.disabled = false
         submit.removeAttribute('aria-busy')
         password.focus()
       }
     },
   },
-    h('div', { class: 'login-mark' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Vyzo',
-      backend.demo ? h('span', { class: 'demo-tag' }, 'démo') : null),
     h('h1', {}, 'Connexion'),
     h('p', { class: 'lead' }, 'Ton compte Vyzo depuis l’ordinateur : appareils, abonnements, profils et listes.'),
     h('label', { for: 'email' }, 'Adresse e-mail'), email,
-    h('label', { for: 'password' }, 'Mot de passe'), password,
+    h('div', { class: 'label-row' },
+      h('label', { for: 'password' }, 'Mot de passe'),
+      linkButton('Mot de passe oublié ?', () => renderForgot(email.value))),
+    password,
     stay.box,
     error,
+    resend,
     submit,
     h('p', { class: 'fine' },
-      'Le compte de tes appareils. Pas encore de compte ? Crée-le dans l’appli : Réglages, Compte Vyzo.'),
+      'Le compte de tes appareils. Pas encore de compte ? Crée-le dans l’appli : Réglages, Compte Vyzo. Un e-mail te demandera de confirmer l’adresse.'),
     import.meta.env.DEV && !backend.demo
       ? h('p', { class: 'fine' }, h('a', { href: '?demo' }, 'Ouvrir la démo (données fictives)'))
       : null,
-    h('div', { class: 'login-theme' }, themeSwitch()),
   )
-  append(root, [h('main', { class: 'login' }, form)])
+
+  function showResend(address: string) {
+    const button = h('button', { class: 'btn outline small', type: 'button' }, 'Renvoyer l’e-mail de confirmation')
+    const note = h('p', { class: 'form-note', role: 'status' })
+    button.addEventListener('click', async () => {
+      if (await busy(button, error, () => backend.resendConfirmation(address)))
+        note.textContent = `E-mail renvoyé à ${address.trim()}. Pense à regarder dans les indésirables.`
+    })
+    clear(resend)
+    append(resend, [button, note])
+    resend.hidden = false
+  }
+
+  authPage('Connexion', form)
+  if (prefill) password.focus()
+  else email.focus()
+}
+
+/** Mot de passe oublié : demande du lien. [message] : lien précédent refusé. */
+function renderForgot(prefill = '', message?: string) {
+  const email = h('input', { id: 'forgot-email', type: 'email', autocomplete: 'username', required: true, spellcheck: 'false', value: prefill.trim() })
+  const error = h('p', { class: 'form-error', role: 'alert' })
+  const submit = h('button', { class: 'btn primary wide', type: 'submit' }, 'Recevoir le lien')
+  const form: HTMLFormElement = h('form', {
+    onsubmit: async (ev: Event) => {
+      ev.preventDefault()
+      const address = email.value.trim()
+      if (await busy(submit, error, () => backend.requestPasswordReset(address))) renderMailSent(address)
+    },
+  },
+    h('h1', {}, 'Mot de passe oublié'),
+    message ? h('p', { class: 'form-error', role: 'alert' }, message) : null,
+    h('p', { class: 'lead' }, 'Saisis l’adresse du compte : tu recevras un lien pour choisir un nouveau mot de passe.'),
+    h('label', { for: 'forgot-email' }, 'Adresse e-mail'), email,
+    error,
+    submit,
+    h('p', { class: 'fine' }, linkButton('Retour à la connexion', () => renderLogin(undefined, email.value))),
+  )
+  authPage('Mot de passe oublié', form)
   email.focus()
+}
+
+function renderMailSent(address: string) {
+  const back = h('button', { class: 'btn outline wide', type: 'button', onclick: () => renderLogin(undefined, address) }, 'Retour à la connexion')
+  authPage('E-mail envoyé', h('div', {},
+    h('div', { class: 'auth-badge' }, icon('mail', 22)),
+    h('h1', {}, 'Regarde tes e-mails'),
+    h('p', { class: 'lead' }, `Si un compte Vyzo existe pour ${address}, un e-mail vient de partir. Ouvre le lien qu’il contient, sur cet ordinateur ou sur ton téléphone : il est valable une heure et ne sert qu’une fois.`),
+    h('p', { class: 'fine' }, 'Rien après quelques minutes ? Regarde dans les indésirables, puis redemande un lien.'),
+    back,
+    h('p', { class: 'fine' }, linkButton('Redemander un lien', () => renderForgot(address))),
+  ))
+  back.focus()
+}
+
+/** Arrivée depuis un lien d'e-mail : on le vérifie, puis la suite dépend de son type. */
+async function openEmailLink(link: EmailLinkParams) {
+  authPage('Vérification', h('div', {}, h('h1', {}, 'Vérification du lien…'), h('p', { class: 'lead' }, 'Un instant.')))
+  if (link.mode === 'error') {
+    renderForgot('', emailLinkError(link.code, link.message))
+    return
+  }
+  try {
+    const { type, account } = await backend.verifyEmailLink(link)
+    if (type === 'recovery') renderNewPassword(account)
+    else if (type === 'signup') {
+      // Le site s'ouvre ensuite avec le mot de passe : c'est lui qui déverrouille les données chiffrées.
+      await backend.signOut().catch(() => undefined)
+      renderConfirmed(account.email)
+    } else renderEmailChanged(account)
+  } catch (e) {
+    const err = e as { code?: string; message?: string }
+    renderForgot('', emailLinkError(err?.code ?? '', err?.message ?? ''))
+  }
+}
+
+function renderConfirmed(address: string) {
+  const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => renderLogin(undefined, address) }, 'Se connecter sur ce site')
+  authPage('Adresse confirmée', h('div', {},
+    h('div', { class: 'auth-badge ok' }, icon('check', 22)),
+    h('h1', {}, 'Adresse confirmée'),
+    h('p', { class: 'lead' }, `Le compte ${address} est prêt. Reviens dans Vyzo, sur la TV, le téléphone ou le PC, et connecte-toi avec cette adresse et ton mot de passe.`),
+    go,
+    h('p', { class: 'fine' }, 'Tes playlists et réglages sont chiffrés sur tes appareils : le serveur ne peut pas les lire.'),
+  ))
+  go.focus()
+}
+
+function renderEmailChanged(account: Account) {
+  const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => void enter(account) }, 'Ouvrir mon compte')
+  authPage('Adresse modifiée', h('div', {},
+    h('div', { class: 'auth-badge ok' }, icon('check', 22)),
+    h('h1', {}, 'Adresse confirmée'),
+    h('p', { class: 'lead' }, `Le compte utilise maintenant ${account.email}. Si un e-mail est aussi arrivé sur l’autre adresse, ouvre son lien pour terminer.`),
+    go,
+  ))
+  go.focus()
+}
+
+function renderNewPassword(account: Account) {
+  const pass1 = h('input', { id: 'new-password', type: 'password', autocomplete: 'new-password', required: true, minlength: MIN_PASSWORD })
+  const pass2 = h('input', { id: 'new-password-2', type: 'password', autocomplete: 'new-password', required: true })
+  const error = h('p', { class: 'form-error', role: 'alert' })
+  const submit = h('button', { class: 'btn primary wide', type: 'submit' }, 'Enregistrer le mot de passe')
+  const form = h('form', {
+    onsubmit: async (ev: Event) => {
+      ev.preventDefault()
+      error.textContent = ''
+      if (pass1.value.length < MIN_PASSWORD) {
+        error.textContent = `Au moins ${MIN_PASSWORD} caractères`
+        return
+      }
+      if (pass1.value !== pass2.value) {
+        error.textContent = 'Les deux mots de passe ne sont pas identiques'
+        pass2.focus()
+        return
+      }
+      let vault: 'kept' | 'pending' | 'none' = 'none'
+      const next = pass1.value
+      if (await busy(submit, error, async () => { vault = await backend.resetPassword(account, next) })) {
+        pass1.value = ''
+        pass2.value = ''
+        renderPasswordReset(account, vault)
+      }
+    },
+  },
+    h('h1', {}, 'Nouveau mot de passe'),
+    h('p', { class: 'lead' }, `Pour le compte ${account.email}.`),
+    h('label', { for: 'new-password' }, 'Nouveau mot de passe'), pass1,
+    h('label', { for: 'new-password-2' }, 'Encore une fois'), pass2,
+    error,
+    submit,
+    h('p', { class: 'fine' }, 'Tous les appareils et navigateurs connectés au compte seront déconnectés : chacun te redemandera le nouveau mot de passe.'),
+  )
+  authPage('Nouveau mot de passe', form)
+  pass1.focus()
+}
+
+function renderPasswordReset(account: Account, vault: 'kept' | 'pending' | 'none') {
+  const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => void enter(account) }, 'Ouvrir mon compte')
+  const vaultText = vault === 'kept'
+    ? 'Tes abonnements chiffrés restent lisibles : ce navigateur avait gardé la clé du compte, elle est maintenant protégée par le nouveau mot de passe.'
+    : vault === 'pending'
+      ? 'Tes abonnements et réglages chiffrés étaient protégés par l’ancien mot de passe. Reconnecte-toi avec le nouveau sur une TV, un téléphone ou un PC où Vyzo était déjà connecté : l’appareil les protégera avec le nouveau, et le site pourra de nouveau les ouvrir.'
+      : null
+  authPage('Mot de passe changé', h('div', {},
+    h('div', { class: 'auth-badge ok' }, icon('check', 22)),
+    h('h1', {}, 'Mot de passe changé'),
+    h('p', { class: 'lead' }, 'Les autres appareils et navigateurs ont été déconnectés. Chacun te redemandera le nouveau mot de passe.'),
+    vaultText ? h('p', { class: vault === 'kept' ? 'form-note' : 'auth-warn' }, vaultText) : null,
+    go,
+  ))
+  go.focus()
 }
 
 async function signOut() {
@@ -2528,6 +2717,13 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator && !backend.demo) {
 // ------------------------------------------------------------------ Démarrage
 
 async function start() {
+  // Lien reçu par e-mail : ses paramètres sont retirés de l'adresse (historique, favoris) avant tout.
+  const link = parseEmailLink(location.search, location.hash)
+  if (link) {
+    history.replaceState(null, '', location.pathname + (backend.demo ? '?demo' : ''))
+    await openEmailLink(link)
+    return
+  }
   try {
     const account = await backend.currentAccount()
     if (account) await enter(account)

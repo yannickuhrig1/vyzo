@@ -2,7 +2,7 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from '@supaba
 import {
   BACKUP_FORMAT, BACKUP_SEALED_KINDS, BACKUP_VERSION, FAVORITES_LIST_ID, MAX_DEVICE_LABEL, MAX_MESSAGE, WEB_SENDER, mergeGuide, nextUpdatedAt,
   parsePlayback, parseRule, parseUsage, recordingId, ruleJson, withCategoryLock,
-  type AccountEvent, type BackupCounts, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
+  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, type BackupFile, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type ContentKind, type Device, type Parental, type PlaylistStatus, type SealedPrefs, type DeviceKind, type LatestVersion, type ListItem, type Playlist, type Profile,
   type ProfileActivity, type ProgressItem, type Recording, type RecordingStatus, type UserList,
 } from './model'
@@ -78,6 +78,20 @@ export interface Backend {
   forgetRemembered(): Promise<void>
   /** Ferme toutes les autres sessions du compte (box, téléphones, PC, autres navigateurs). */
   signOutOthers(): Promise<void>
+
+  /** Mot de passe oublié : e-mail avec un lien vers ce site. Rien ne dit si l'adresse a un compte. */
+  requestPasswordReset(email: string): Promise<void>
+  /** Renvoie l'e-mail de confirmation d'une inscription. */
+  resendConfirmation(email: string): Promise<void>
+  /** Vérifie un lien reçu par e-mail (confirmation, mot de passe oublié, changement d'adresse). */
+  verifyEmailLink(link: EmailLinkParams): Promise<{ type: EmailLinkType; account: Account }>
+  /**
+   * Nouveau mot de passe après « Mot de passe oublié ». Les autres sessions sont fermées : chaque appareil redemande le
+   * mot de passe, et le premier qui a encore la clé du compte la protège avec le nouveau.
+   * « kept » : la clé, gardée dans ce navigateur, est déjà protégée par le nouveau mot de passe ; « pending » : un
+   * appareil doit s'en charger ; « none » : pas encore de données chiffrées.
+   */
+  resetPassword(account: Account, next: string): Promise<'kept' | 'pending' | 'none'>
 
   profiles(): Promise<Profile[]>
   saveProfiles(profiles: Profile[]): Promise<void>
@@ -378,14 +392,18 @@ export class SupabaseBackend implements Backend {
     }
     const { error } = await this.db.auth.updateUser({ password: next })
     if (error) throw error
-    if (!key) {
-      void this.logEvent('password_changed')
-      return
+    if (key) {
+      const failure = await this.writeVault(account, key, next)
+      if (failure) throw new UserError(`Mot de passe changé, mais la clé n’a pas pu être rechiffrée (${failure}). Sans fermer cette page, recommence avec le nouveau mot de passe comme mot de passe actuel.`)
     }
-    // Comme SealedSync.writeVault : nouveau sel, même clé. keyId ne change pas, les appareils restent ouverts.
+    void this.logEvent('password_changed')
+  }
+
+  /** Comme SealedSync.writeVault : nouveau sel, même clé. keyId ne change pas, les appareils restent ouverts. null : réussi. */
+  private async writeVault(account: Account, key: Uint8Array, password: string): Promise<string | null> {
     const salt = crypto.getRandomValues(new Uint8Array(16))
     const iterations = 600_000
-    const kek = await deriveKey(next, salt, iterations)
+    const kek = await deriveKey(password, salt, iterations)
     const payload = JSON.stringify({
       salt: toBase64(salt), iterations, wrapped: await seal(kek, key, context(account.userId, 'vault', 'key')), keyId: await keyId(key),
     })
@@ -393,13 +411,63 @@ export class SupabaseBackend implements Backend {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { error: e } = await this.db.from('sealed_items')
         .upsert({ kind: 'vault', id: 'key', payload, updated_at: Date.now(), deleted: false }, { onConflict: 'user_id,kind,id' })
-      if (!e) {
-        void this.logEvent('password_changed')
-        return
-      }
+      if (!e) return null
       last = e
     }
-    throw new UserError(`Mot de passe changé, mais la clé n’a pas pu être rechiffrée (${friendlyError(last)}). Sans fermer cette page, recommence avec le nouveau mot de passe comme mot de passe actuel.`)
+    return friendlyError(last)
+  }
+
+  // ---------------------------------------------------------------- Liens envoyés par e-mail
+
+  /** Adresse de cette page, sans requête ni route : c'est là que mènent les liens des e-mails. */
+  private pageUrl(): string {
+    return location.origin + location.pathname
+  }
+
+  async requestPasswordReset(email: string): Promise<void> {
+    const { error } = await this.db.auth.resetPasswordForEmail(email.trim(), { redirectTo: this.pageUrl() })
+    if (error) throw error
+  }
+
+  async resendConfirmation(email: string): Promise<void> {
+    const { error } = await this.db.auth.resend({ type: 'signup', email: email.trim(), options: { emailRedirectTo: this.pageUrl() } })
+    if (error) throw error
+  }
+
+  async verifyEmailLink(link: EmailLinkParams): Promise<{ type: EmailLinkType; account: Account }> {
+    if (link.mode === 'error') throw new UserError(link.message)
+    // La clé ouverte dans la page est oubliée (le lien peut viser un autre compte). Celle gardée par « Rester
+    // déverrouillé » reste : liée à un compte, elle permet de garder les données lisibles après « Mot de passe oublié ».
+    this.vaultKey?.fill(0)
+    this.vaultKey = null
+    this.vaultUser = ''
+    const { data, error } = link.mode === 'token'
+      ? await this.db.auth.verifyOtp({
+        token_hash: link.tokenHash, type: link.type === 'signup' ? 'email' : link.type,
+      })
+      : await this.db.auth.setSession({ access_token: link.accessToken, refresh_token: link.refreshToken })
+    if (error) throw error
+    const user = data.user
+    if (!user) throw new UserError('Lien invalide')
+    return { type: link.type, account: { userId: user.id, email: user.email ?? '' } }
+  }
+
+  async resetPassword(account: Account, next: string): Promise<'kept' | 'pending' | 'none'> {
+    const { error } = await this.db.auth.updateUser({ password: next })
+    if (error) throw error
+    void this.logEvent('password_changed', 'mot de passe oublié')
+    // Quelqu'un d'autre a peut-être le mot de passe : les autres sessions se ferment. Les appareils gardent leur clé et
+    // la protègent avec le nouveau mot de passe dès qu'on s'y reconnecte (SealedSync.unlock).
+    await this.db.auth.signOut({ scope: 'others' }).catch(() => undefined)
+    const record = await this.vaultRecord().catch(() => null)
+    if (!record) return 'none'
+    // « Rester déverrouillé » coché plus tôt dans ce navigateur : la clé est là, le site la protège tout de suite.
+    const kept = await recallKey(account.userId, record.keyId).catch(() => null)
+    if (!kept || kept.length !== 32 || await keyId(kept) !== record.keyId) return 'pending'
+    if (await this.writeVault(account, kept, next)) return 'pending'
+    this.vaultKey = kept
+    this.vaultUser = account.userId
+    return 'kept'
   }
 
   async forgetRemembered(): Promise<void> {

@@ -5,7 +5,7 @@ import {
 } from './backend'
 import {
   dayKey, mergeGuide, nextUpdatedAt, recordingId, withCategoryLock,
-  type AccountEvent, type BackupCounts, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
+  type AccountEvent, type BackupCounts, type EmailLinkParams, type EmailLinkType, type GuideResult, type PlaybackState, type ScreenTimeRule, type UsageDay,
   type CatalogEntry, type Device, type Parental, type SealedPrefs, type ListItem, type Playlist, type Profile, type ProfileActivity, type ProgressItem, type Recording,
   type RecordingStatus, type UserList,
 } from './model'
@@ -158,6 +158,25 @@ export class DemoBackend implements Backend {
 
   async signOutOthers() {
     await this.wait(400)
+  }
+
+  async requestPasswordReset() {
+    await this.wait(600)
+  }
+
+  async resendConfirmation() {
+    await this.wait(600)
+  }
+
+  async verifyEmailLink(link: EmailLinkParams): Promise<{ type: EmailLinkType; account: Account }> {
+    await this.wait(500)
+    if (link.mode === 'error') throw new UserError(link.message)
+    return { type: link.type, account: { userId: 'demo', email: 'demo@vyzo.local' } }
+  }
+
+  async resetPassword(): Promise<'kept' | 'pending' | 'none'> {
+    await this.wait(800)
+    return 'pending'
   }
 
   async forgetRemembered() {

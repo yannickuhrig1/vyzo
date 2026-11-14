@@ -246,14 +246,15 @@ fun AccountScreen() {
                                 is SignUpResult.SignedIn -> Unit
                                 SignUpResult.ConfirmationSent -> info =
                                     "Compte créé. Un e-mail de confirmation a été envoyé à $email : ouvre le lien qu'il contient " +
-                                        "(la page qui s'affiche ensuite peut sembler en erreur, ce n'est pas grave), puis reviens te connecter ici."
+                                        "(sur le téléphone ou l'ordinateur), puis reviens te connecter ici. Rien reçu ? Regarde dans les indésirables."
                             }
                         }
                     }) { Text("Créer un compte") }
                     if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 }
                 TextButton(enabled = !busy && email.contains('@'), onClick = {
-                    run { c.cloud.sendPasswordReset(email); info = "Si un compte existe pour $email, un e-mail pour changer le mot de passe vient d'être envoyé." }
+                    run { c.cloud.sendPasswordReset(email); info = "Si un compte existe pour $email, un e-mail vient de partir. Son lien ouvre le site du compte, " +
+                        "où tu choisis le nouveau mot de passe. Reviens ensuite te connecter ici avec lui." }
                 }) { Text("Mot de passe oublié") }
                 if (error?.contains("confirm", ignoreCase = true) == true) {
                     TextButton(enabled = !busy, onClick = { run { c.cloud.resendConfirmation(email); info = "E-mail de confirmation renvoyé à $email." } }) {

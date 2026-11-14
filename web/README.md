@@ -55,8 +55,11 @@ npm run build      # site dans dist/, avec une politique de sécurité de conten
 
 En ligne : **https://yannickuhrig1.github.io/vyzo/**, publié par `.github/workflows/site.yml` (tests, build, GitHub
 Pages) à chaque changement de `web/` sur `main`. `dist/` peut aussi se publier tel quel sur tout hébergement statique
-en HTTPS. Pour d'éventuels liens envoyés par e-mail (confirmation, mot de passe oublié), l'adresse du site doit figurer
-dans Supabase › Authentication › URL Configuration.
+en HTTPS. Les e-mails du compte (confirmation d'inscription, mot de passe oublié, changement d'adresse, alerte de
+changement de mot de passe) mènent au site, qui vérifie le lien : `?token_hash=…&type=…`. Leurs modèles, aux couleurs de
+Vyzo, sont dans `supabase/templates/` ; `python3 scripts/mails-supabase.py` les envoie à Supabase avec l'adresse du site
+et la confirmation obligatoire. Sans serveur d'envoi personnalisé (SMTP), Supabase n'écrit qu'aux membres de l'équipe
+du projet.
 
 ## Règles
 
