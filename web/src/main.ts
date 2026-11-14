@@ -585,6 +585,7 @@ function renderEmailChanged(address: string) {
 function renderNewPassword(account: Account) {
   const pass1 = h('input', { id: 'new-password', type: 'password', autocomplete: 'new-password', required: true, minlength: MIN_PASSWORD })
   const pass2 = h('input', { id: 'new-password-2', type: 'password', autocomplete: 'new-password', required: true })
+  const old = h('input', { id: 'old-password', type: 'password', autocomplete: 'current-password' })
   const error = h('p', { class: 'form-error', role: 'alert' })
   const submit = h('button', { class: 'btn primary wide', type: 'submit' }, 'Enregistrer le mot de passe')
   const form = h('form', {
@@ -602,9 +603,10 @@ function renderNewPassword(account: Account) {
       }
       let result: PasswordResetResult = { vault: 'none', othersSignedOut: true }
       const next = pass1.value
-      if (await busy(submit, error, async () => { result = await backend.resetPassword(account, next) })) {
+      if (await busy(submit, error, async () => { result = await backend.resetPassword(account, next, old.value) })) {
         pass1.value = ''
         pass2.value = ''
+        old.value = ''
         renderPasswordReset(account, result)
       }
     },
@@ -613,6 +615,8 @@ function renderNewPassword(account: Account) {
     h('p', { class: 'lead' }, `Pour le compte ${account.email}.`),
     h('label', { for: 'new-password' }, 'Nouveau mot de passe'), pass1,
     h('label', { for: 'new-password-2' }, 'Encore une fois'), pass2,
+    h('label', { for: 'old-password' }, 'Ancien mot de passe (facultatif)'), old,
+    h('p', { class: 'fine' }, 'Tes abonnements et réglages chiffrés sont protégés par l’ancien mot de passe. Si tu t’en souviens, saisis-le : ils passeront au nouveau tout de suite. Sinon, tu pourras le faire plus tard, ou un appareil déjà connecté s’en chargera.'),
     error,
     submit,
     h('p', { class: 'fine' }, 'Tous les appareils et navigateurs connectés au compte seront déconnectés : chacun te redemandera le nouveau mot de passe.'),
@@ -624,9 +628,9 @@ function renderNewPassword(account: Account) {
 function renderPasswordReset(account: Account, { vault, othersSignedOut }: PasswordResetResult) {
   const go = h('button', { class: 'btn primary wide', type: 'button', onclick: () => void enter(account) }, 'Ouvrir mon compte')
   const vaultText = vault === 'kept'
-    ? 'Tes abonnements chiffrés restent lisibles : ce navigateur avait gardé la clé du compte, elle est maintenant protégée par le nouveau mot de passe.'
+    ? 'Tes abonnements et réglages chiffrés restent lisibles : ils sont maintenant protégés par le nouveau mot de passe.'
     : vault === 'pending'
-      ? 'Tes abonnements et réglages chiffrés étaient protégés par l’ancien mot de passe. Reconnecte-toi avec le nouveau sur une TV, un téléphone ou un PC où Vyzo était déjà connecté : l’appareil les protégera avec le nouveau, et le site pourra de nouveau les ouvrir.'
+      ? 'Tes abonnements et réglages chiffrés sont encore protégés par l’ancien mot de passe. Pour les passer au nouveau : dans le compte, choisis « Déverrouiller » et saisis l’ancien quand le site le demande, ou reconnecte-toi avec le nouveau sur une TV, un téléphone ou un PC où Vyzo était déjà connecté.'
       : null
   authPage('Mot de passe changé', h('div', {},
     h('div', { class: 'auth-badge ok' }, icon('check', 22)),
@@ -826,17 +830,42 @@ function unlockForm(onDone: () => void) {
   const error = h('p', { class: 'form-error', role: 'alert' })
   const submit = h('button', { class: 'btn primary', type: 'submit' }, icon('unlock', 15), 'Déverrouiller')
   const stay = rememberBox('vault-remember')
+  // Montré quand le mot de passe est bien celui du compte mais n'ouvre pas la clé : elle est encore protégée par un
+  // ancien mot de passe (« Mot de passe oublié » sans appareil pour la reprendre).
+  const old = h('input', { id: 'vault-old', type: 'password', autocomplete: 'off' })
+  const oldBox = h('div', { class: 'unlock-old', hidden: true },
+    h('p', {},
+      'C’est bien le mot de passe du compte, mais tes données chiffrées sont encore protégées par l’ancien. Saisis l’ancien mot de passe une seule fois : elles passeront au nouveau, ici et sur tes appareils.'),
+    h('label', { for: 'vault-old' }, 'Ancien mot de passe'), old)
   const form = h('form', {
     class: 'unlock-form',
     onsubmit: async (ev: Event) => {
       ev.preventDefault()
-      error.textContent = ''
-      let ok = false
-      await act(submit, async () => { ok = await backend.unlockVault(state.account!, password.value, stay.input.checked) })
-      if (!ok) {
-        error.textContent = 'Mot de passe incorrect.'
-        password.select()
-        return
+      const account = state.account!
+      if (!oldBox.hidden) {
+        if (!await busy(submit, error, () => backend.recoverVault(account, password.value, old.value, stay.input.checked))) {
+          old.select()
+          return
+        }
+        old.value = ''
+        oldBox.hidden = true
+      } else {
+        let ok = false
+        let current = false
+        if (!await busy(submit, error, async () => {
+          ok = await backend.unlockVault(account, password.value, stay.input.checked)
+          if (!ok) current = await backend.checkPassword(account, password.value)
+        })) return
+        if (!ok && current) {
+          oldBox.hidden = false
+          old.focus()
+          return
+        }
+        if (!ok) {
+          error.textContent = 'Mot de passe incorrect.'
+          password.select()
+          return
+        }
       }
       password.value = ''
       toast(stay.input.checked ? 'Déverrouillé, et gardé sur cet ordinateur' : 'Données chiffrées déverrouillées')
@@ -847,6 +876,7 @@ function unlockForm(onDone: () => void) {
   },
     h('label', { for: 'vault-pass' }, 'Mot de passe du compte Vyzo'),
     h('div', { class: 'inline-field' }, password, submit),
+    oldBox,
     stay.box,
     error,
     h('p', { class: 'fine' },

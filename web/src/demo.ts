@@ -145,6 +145,20 @@ export class DemoBackend implements Backend {
     return this.unlocked
   }
 
+  async checkPassword(_account: Account, password: string) {
+    await this.wait(400)
+    return password === 'demo' || password === 'nouveau'
+  }
+
+  /** Démo : « nouveau » joue un mot de passe changé par « Mot de passe oublié », la clé restant sous « demo ». */
+  async recoverVault(_account: Account, current: string, old: string, remember = false) {
+    await this.wait(700)
+    if (current !== 'nouveau') throw new UserError('Ce n’est pas le mot de passe actuel du compte')
+    if (old !== 'demo') throw new UserError('L’ancien mot de passe n’ouvre pas les données chiffrées')
+    this.unlocked = true
+    if (remember) sessionStorage.setItem('vyzo-demo-remember', '1')
+  }
+
   async lockVault() {
     this.unlocked = false
     sessionStorage.removeItem('vyzo-demo-remember')
@@ -174,9 +188,10 @@ export class DemoBackend implements Backend {
     return { type: link.type, account: { userId: 'demo', email: 'demo@vyzo.local' } }
   }
 
-  async resetPassword(): Promise<PasswordResetResult> {
+  async resetPassword(_account: Account, _next: string, old = ''): Promise<PasswordResetResult> {
     await this.wait(800)
-    return { vault: 'pending', othersSignedOut: true }
+    if (old && old !== 'demo') throw new UserError('L’ancien mot de passe n’ouvre pas les données chiffrées : rien n’a été changé. Laisse le champ vide si tu ne t’en souviens pas.')
+    return { vault: old ? 'kept' : 'pending', othersSignedOut: true }
   }
 
   async forgetRemembered() {

@@ -87,6 +87,7 @@ fun AccountScreen() {
     var confirmSignOut by remember { mutableStateOf(false) }
     var phoneLogin by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var oldPassword by remember { mutableStateOf("") }
 
     fun run(block: suspend () -> Unit) {
         if (busy) return
@@ -164,8 +165,10 @@ fun AccountScreen() {
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(if (lost) "Playlists du compte illisibles" else "Synchroniser les playlists et réglages", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            if (lost) "Le mot de passe a changé et cet appareil n'a pas la clé. Si un autre appareil te demande de te reconnecter, fais-le d'abord, " +
-                                "puis réessaie ici. Sinon, repars de cet appareil : ce qui est illisible sur le compte sera remplacé par ses playlists, son guide, ses réglages et ses chaînes."
+                            if (lost) "Le mot de passe a changé et tes données chiffrées sont encore protégées par l'ancien. Saisis le mot de passe actuel et l'ancien : " +
+                                "elles passeront au nouveau, ici, sur tes autres appareils et sur le site. Si tu as oublié l'ancien, reconnecte-toi d'abord sur un autre " +
+                                "appareil qui te le demande, puis réessaie ici. Sinon, repars de cet appareil : ce qui est illisible sur le compte sera remplacé par ses " +
+                                "playlists, son guide, ses réglages et ses chaînes."
                             else "Ils sont chiffrés sur tes appareils : le serveur ne peut pas les lire. Saisis le mot de passe du compte une seule fois sur cet appareil.",
                             style = MaterialTheme.typography.bodyMedium, color = VyzoColors.TextDim,
                         )
@@ -180,9 +183,18 @@ fun AccountScreen() {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (lost) OutlinedTextField(
+                            value = oldPassword, onValueChange = { oldPassword = it }, label = { Text("Ancien mot de passe") }, singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         error?.let { Text(it, color = VyzoColors.Red) }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Button(enabled = !busy && password.isNotEmpty(), onClick = {
+                            if (lost && oldPassword.isNotEmpty()) Button(enabled = !busy && password.isNotEmpty(), onClick = {
+                                run { c.cloud.recoverVault(password, oldPassword); password = ""; oldPassword = "" }
+                            }) { Text("Reprendre avec l'ancien") }
+                            else Button(enabled = !busy && password.isNotEmpty(), onClick = {
                                 run { c.cloud.unlockVault(password); if (c.cloud.status.value.vault == VaultState.OPEN) password = "" }
                             }) { Text(if (lost) "Réessayer" else "Déverrouiller") }
                             if (lost) OutlinedButton(enabled = !busy && password.isNotEmpty(), onClick = { confirmReset = true }) { Text("Repartir de cet appareil") }

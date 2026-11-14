@@ -68,6 +68,13 @@ export interface Backend {
   vaultStatus(account: Account): Promise<VaultStatus>
   /** false : mauvais mot de passe. */
   unlockVault(account: Account, password: string, remember?: boolean): Promise<boolean>
+  /** [password] est bien le mot de passe actuel du compte (sans rien changer d'autre). */
+  checkPassword(account: Account, password: string): Promise<boolean>
+  /**
+   * Clé encore protégée par un ancien mot de passe (« Mot de passe oublié » sans appareil pour la reprendre) : [old]
+   * l'ouvre, et elle est rechiffrée tout de suite avec [current], le mot de passe actuel du compte (vérifié d'abord).
+   */
+  recoverVault(account: Account, current: string, old: string, remember?: boolean): Promise<void>
   /** Verrouille et oublie la clé gardée dans ce navigateur. */
   lockVault(): Promise<void>
   /** La clé du compte est gardée dans ce navigateur. */
@@ -88,11 +95,13 @@ export interface Backend {
   /**
    * Nouveau mot de passe après « Mot de passe oublié ». Les autres sessions sont fermées : chaque appareil redemande le
    * mot de passe, et le premier qui a encore la clé du compte la protège avec le nouveau.
-   * vault « kept » : la clé, gardée dans ce navigateur, est déjà protégée par le nouveau mot de passe ; « pending » :
-   * un appareil doit s'en charger ; « none » : pas encore de données chiffrées. othersSignedOut : false si la
-   * fermeture des autres sessions a échoué.
+   * [old], facultatif : l'ancien mot de passe, s'il revient. Il ouvre la clé, qui passe au nouveau mot de passe tout de
+   * suite ; s'il ne l'ouvre pas, rien n'est changé (UserError).
+   * vault « kept » : la clé (ancien mot de passe ou gardée dans ce navigateur) est déjà protégée par le nouveau mot de
+   * passe ; « pending » : un appareil ou l'ancien mot de passe doit s'en charger ; « none » : pas encore de données
+   * chiffrées. othersSignedOut : false si la fermeture des autres sessions a échoué.
    */
-  resetPassword(account: Account, next: string): Promise<PasswordResetResult>
+  resetPassword(account: Account, next: string, old?: string): Promise<PasswordResetResult>
 
   profiles(): Promise<Profile[]>
   saveProfiles(profiles: Profile[]): Promise<void>
@@ -368,6 +377,25 @@ export class SupabaseBackend implements Backend {
     return true
   }
 
+  async checkPassword(account: Account, password: string): Promise<boolean> {
+    const { data, error } = await this.db.auth.signInWithPassword({ email: account.email, password })
+    return !error && data.user?.id === account.userId
+  }
+
+  async recoverVault(account: Account, current: string, old: string, remember = false): Promise<void> {
+    if (!await this.checkPassword(account, current)) throw new UserError('Ce n’est pas le mot de passe actuel du compte')
+    const record = await this.vaultRecord()
+    if (!record) throw new UserError('Pas encore de données chiffrées sur le compte')
+    const key = await unwrapVault(record, old, account.userId)
+    if (!key) throw new UserError('L’ancien mot de passe n’ouvre pas les données chiffrées')
+    const failure = await this.writeVault(account, key, current)
+    if (failure) throw new UserError(`La clé n’a pas pu être rechiffrée (${failure}). Réessaie.`)
+    this.vaultKey = key
+    this.vaultUser = account.userId
+    if (remember) await rememberKey(account.userId, record.keyId, key).catch(() => undefined)
+    else await forgetKey()
+  }
+
   async lockVault(): Promise<void> {
     this.vaultKey?.fill(0)
     this.vaultKey = null
@@ -453,7 +481,14 @@ export class SupabaseBackend implements Backend {
     return { type: link.type, account: { userId: user.id, email: user.email ?? '' } }
   }
 
-  async resetPassword(account: Account, next: string): Promise<PasswordResetResult> {
+  async resetPassword(account: Account, next: string, old = ''): Promise<PasswordResetResult> {
+    // Ancien mot de passe donné : il doit ouvrir la clé avant que quoi que ce soit change.
+    let opened: Uint8Array | null = null
+    if (old) {
+      const record = await this.vaultRecord()
+      opened = record ? await unwrapVault(record, old, account.userId) : null
+      if (record && !opened) throw new UserError('L’ancien mot de passe n’ouvre pas les données chiffrées : rien n’a été changé. Laisse le champ vide si tu ne t’en souviens pas.')
+    }
     const { error } = await this.db.auth.updateUser({ password: next })
     if (error) throw error
     void this.logEvent('password_changed', 'mot de passe oublié')
@@ -465,8 +500,9 @@ export class SupabaseBackend implements Backend {
     if (othersSignedOut) void this.logEvent('signout_others')
     const record = await this.vaultRecord().catch(() => null)
     if (!record) return { vault: 'none', othersSignedOut }
-    // « Rester déverrouillé » coché plus tôt dans ce navigateur : la clé est là, le site la protège tout de suite.
-    const kept = await recallKey(account.userId, record.keyId).catch(() => null)
+    // Ancien mot de passe, ou « Rester déverrouillé » coché plus tôt dans ce navigateur : la clé est là, le site la
+    // protège tout de suite.
+    const kept = opened ?? await recallKey(account.userId, record.keyId).catch(() => null)
     if (!kept || kept.length !== 32 || await keyId(kept) !== record.keyId) return { vault: 'pending', othersSignedOut }
     if (await this.writeVault(account, kept, next)) return { vault: 'pending', othersSignedOut }
     this.vaultKey = kept

@@ -505,6 +505,9 @@ input.mono-input { font-family: var(--font-mono); font-size: 13.5px; }
 .gate-main > p { color: var(--text-2); margin: 6px 0 0; font-size: 13.5px; }
 .inline-field { display: flex; gap: 8px; }
 .inline-field input { flex: 1; min-width: 0; }
+.unlock-old { display: grid; gap: 6px; margin-top: 12px; }
+.unlock-old[hidden] { display: none; }
+.unlock-old p { margin: 0 0 4px; color: var(--text-2); font-size: 13px; line-height: 1.5; }
 
 /* ================================================================ Réglages (sécurité, contrôle parental) */
 

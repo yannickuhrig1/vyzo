@@ -331,6 +331,31 @@ class SealedSyncTest {
     }
 
     @Test
+    fun motDePasseReinitialiseRepriseAvecLAncien() = runBlocking {
+        val a = Device()
+        a.addXtream()
+        a.cloud.signIn(email, password)
+        fake.setPassword(email, "nouveau-mot-de-passe")
+
+        val b = Device()
+        b.cloud.signIn(email, "nouveau-mot-de-passe")
+        assertEquals(VaultState.LOST, b.cloud.status.value.vault)
+
+        // Mauvais ancien mot de passe : rien ne bouge.
+        assertTrue(runCatching { b.cloud.recoverVault("nouveau-mot-de-passe", "pas-le-bon") }.isFailure)
+        assertEquals(VaultState.LOST, b.cloud.status.value.vault)
+
+        b.cloud.recoverVault("nouveau-mot-de-passe", password)
+        assertEquals(VaultState.OPEN, b.cloud.status.value.vault)
+        assertEquals(listOf("Abonnement"), b.names())
+        // Même clé, maintenant protégée par le nouveau mot de passe : un nouvel appareil l'ouvre directement.
+        val d = Device()
+        d.cloud.signIn(email, "nouveau-mot-de-passe")
+        assertEquals(VaultState.OPEN, d.cloud.status.value.vault)
+        assertEquals(listOf("Abonnement"), d.names())
+    }
+
+    @Test
     fun serveurSansLaTableChiffreeNeBloquePasLeCompte() = runBlocking {
         fake.missingTables = setOf(CloudSync.T_SEALED)
         val a = Device()

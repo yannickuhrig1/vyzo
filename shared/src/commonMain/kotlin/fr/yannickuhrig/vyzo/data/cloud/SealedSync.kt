@@ -260,6 +260,18 @@ internal class SealedSync(
         return if (key != null) VaultState.OPEN else VaultState.LOST
     }
 
+    /**
+     * Clé encore protégée par un ancien mot de passe (« Mot de passe oublié » sans appareil pour la reprendre) : [oldPassword]
+     * l'ouvre, et elle est aussitôt protégée par [password], le mot de passe actuel. false : l'ancien ne l'ouvre pas.
+     */
+    suspend fun recover(session: CloudSession, oldPassword: String, password: String): Boolean {
+        val record = readVault(session) ?: return false
+        val key = unwrap(record, oldPassword, session) ?: return false
+        writeVault(session, key, password)
+        store.update { it.copy(vaultKey = VaultCrypto.encode(key), vaultUserId = session.userId, vaultLost = false) }
+        return true
+    }
+
     /** Clé perdue : nouvelle clé, et les anciens blocs illisibles sont effacés. Cet appareil renvoie ensuite ce qu'il a. */
     suspend fun reset(session: CloudSession, password: String) {
         val key = VaultCrypto.randomBytes(VaultCrypto.KEY_BYTES)

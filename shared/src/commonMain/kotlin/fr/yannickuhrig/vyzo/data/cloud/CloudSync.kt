@@ -350,6 +350,21 @@ class CloudSync(
     }
 
     /**
+     * Clé illisible après « Mot de passe oublié » : l'ancien mot de passe l'ouvre, et elle passe au nouveau pour tous les
+     * appareils et le site. Le mot de passe actuel est vérifié d'abord.
+     */
+    suspend fun recoverVault(password: String, oldPassword: String) {
+        val email = store.get().session?.email ?: throw CloudException("Pas de compte Vyzo connecté")
+        val s = api.signIn(email, password)
+        store.update { it.copy(session = s, sealedKnown = emptyMap(), cursors = it.cursors - T_SEALED) }
+        if (!sealed.recover(s, oldPassword, password)) throw CloudException("L'ancien mot de passe n'ouvre pas les données chiffrées")
+        _status.value = _status.value.copy(vault = sealed.state(), error = null)
+        val before = playlistKeys()
+        sync()
+        reportNothingRestored(before)
+    }
+
+    /**
      * Clé perdue après une réinitialisation du mot de passe : cet appareil repart avec une nouvelle clé et renvoie ses
      * playlists, son guide, ses réglages et ses chaînes. Le mot de passe est vérifié d'abord.
      */
