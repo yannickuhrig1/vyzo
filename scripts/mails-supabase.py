@@ -5,6 +5,10 @@ confirmation obligatoire à l'inscription, liens qui mènent au site du compte, 
 
     python3 scripts/mails-supabase.py            # montre l'état actuel et ce qui changera, puis demande
     python3 scripts/mails-supabase.py --voir     # montre seulement l'état actuel
+    python3 scripts/mails-supabase.py --resend   # règle aussi l'envoi par Resend (SMTP)
+
+Avec --resend, l'adresse d'expéditeur doit être sur un domaine vérifié chez Resend (https://resend.com/domains) ; la
+clé d'API Resend (« re_… ») est demandée sans s'afficher, comme le jeton.
 
 Le jeton d'accès (https://supabase.com/dashboard/account/tokens, commence par « sbp_ ») est demandé sans s'afficher et
 n'est gardé nulle part. On peut aussi le passer dans SUPABASE_ACCESS_TOKEN.
@@ -55,6 +59,22 @@ def ask_token() -> str:
     return token
 
 
+def ask_resend() -> dict:
+    sender = ""
+    while "@" not in sender:
+        sender = input("Adresse d'expéditeur, sur ton domaine vérifié chez Resend (ex. compte@mondomaine.fr) : ").strip()
+    key = ""
+    while not key.startswith("re_"):
+        if key:
+            print(f"  Reçu {len(key)} caractères qui ne commencent pas par « re_ ». Recommence (Ctrl+Maj+V pour coller).")
+        key = getpass.getpass("Clé d'API Resend (re_…, ne s'affiche pas) : ").strip()
+    print(f"  Clé reçue ({len(key)} caractères).")
+    return {
+        "smtp_host": "smtp.resend.com", "smtp_port": "465", "smtp_user": "resend", "smtp_pass": key,
+        "smtp_admin_email": sender, "smtp_sender_name": "Vyzo",
+    }
+
+
 def allow_list(current: str) -> str:
     items = [x.strip() for x in (current or "").split(",") if x.strip()]
     for wanted in (SITE_URL, SITE_URL + "**"):
@@ -66,6 +86,7 @@ def allow_list(current: str) -> str:
 def main() -> None:
     only_show = "--voir" in sys.argv
     token = ask_token()
+    smtp_patch = ask_resend() if "--resend" in sys.argv and not only_show else {}
     cfg = call("GET", token)
 
     smtp = bool(cfg.get("smtp_host"))
@@ -76,7 +97,7 @@ def main() -> None:
     print(f"  Serveur d'envoi personnalisé (SMTP) : {cfg.get('smtp_host') + ' (' + str(cfg.get('smtp_sender_name') or '') + ')' if smtp else 'non'}")
     print(f"  Sujet du mail d'inscription         : {cfg.get('mailer_subjects_confirmation')}")
     print(f"  Alerte « mot de passe changé »      : {'oui' if cfg.get('mailer_notifications_password_changed_enabled') else 'non'}")
-    if not smtp:
+    if not cfg.get("smtp_host") and not smtp_patch:
         print("\n  ATTENTION : sans serveur d'envoi personnalisé, Supabase n'envoie les e-mails qu'aux membres de l'équipe du")
         print("  projet, et seulement quelques-uns par heure. Les autres utilisateurs ne recevront rien. Voir")
         print("  Authentication › Emails › SMTP Settings dans le tableau de bord Supabase.")
@@ -89,8 +110,9 @@ def main() -> None:
         "mailer_autoconfirm": False,
         "mailer_notifications_password_changed_enabled": True,
     }
-    if smtp and not cfg.get("smtp_sender_name"):
+    if cfg.get("smtp_host") and not cfg.get("smtp_sender_name"):
         patch["smtp_sender_name"] = "Vyzo"
+    patch.update(smtp_patch)
     for file, subject_field, content_field, subject in MAILS:
         patch[subject_field] = subject
         patch[content_field] = (TEMPLATES / file).read_text(encoding="utf-8")
@@ -99,6 +121,8 @@ def main() -> None:
     for k, v in patch.items():
         if k.startswith("mailer_templates_"):
             print(f"  {k} : {len(v)} caractères")
+        elif k == "smtp_pass":
+            print(f"  {k} : (clé Resend, {len(v)} caractères)")
         elif cfg.get(k) != v:
             print(f"  {k} : {cfg.get(k)!r} → {v!r}")
     if input("\nEnvoyer ces réglages à Supabase ? [o/N] ").strip().lower() not in ("o", "oui", "y", "yes"):
@@ -106,7 +130,8 @@ def main() -> None:
         return
     call("PATCH", token, patch)
     after = call("GET", token)
-    ok = all(after.get(k) == v for k, v in patch.items())
+    # Le mot de passe SMTP n'est jamais relu par l'API ; le port peut revenir en nombre.
+    ok = all(str(after.get(k)) == str(v) for k, v in patch.items() if k != "smtp_pass")
     print("\nRÉGLAGES ENVOYÉS ET VÉRIFIÉS" if ok else "\nEnvoyé, mais la relecture ne correspond pas entièrement : regarde le tableau de bord.")
     if not ok:
         sys.exit(1)
