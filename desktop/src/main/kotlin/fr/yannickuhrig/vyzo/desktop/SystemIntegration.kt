@@ -62,6 +62,26 @@ object Os {
             dmi?.takeIf { it.isNotBlank() } ?: "PC"
         }
     }
+
+    /** Identifiant stable de la machine (machine-id sous Linux, MachineGuid sous Windows, UUID matériel sous macOS). */
+    val machineId: String by lazy {
+        when {
+            isLinux -> listOf("/etc/machine-id", "/var/lib/dbus/machine-id")
+                .firstNotNullOfOrNull { path -> runCatching { File(path).takeIf(File::isFile)?.readText()?.trim() }.getOrNull()?.takeIf(String::isNotBlank) }
+                .orEmpty()
+            isWindows -> runCatching {
+                Advapi32Util.registryGetStringValue(
+                    WinReg.HKEY_LOCAL_MACHINE,
+                    """SOFTWARE\Microsoft\Cryptography""",
+                    "MachineGuid",
+                ).trim()
+            }.getOrDefault("")
+            isMac -> run("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+                ?.let { out -> Regex("\"IOPlatformUUID\"\\s*=\\s*\"([^\"]+)\"").find(out)?.groupValues?.getOrNull(1)?.trim() }
+                .orEmpty()
+            else -> ""
+        }
+    }
 }
 
 /** Dossiers de Vyzo PC. */

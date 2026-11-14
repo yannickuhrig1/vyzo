@@ -30,6 +30,12 @@ interface Platform {
     /** Modèle de l'appareil (rapports de diagnostic et de plantage). */
     val deviceModel: String
 
+    /**
+     * Empreinte stable de l'appareil (reconnue après reconnexion ou réinstallation pour éviter les doublons),
+     * vide si indisponible.
+     */
+    val stableDeviceId: String get() = ""
+
     /** Système (« Android 14 (API 34) », « Linux Mint 22.3 »…). */
     val systemVersion: String
 

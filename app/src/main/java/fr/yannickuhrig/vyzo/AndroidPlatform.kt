@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import fr.yannickuhrig.vyzo.data.backup.SharedBackupStore
+import fr.yannickuhrig.vyzo.data.profile.ProfileManager
 import fr.yannickuhrig.vyzo.data.sync.SyncWorker
 import fr.yannickuhrig.vyzo.platform.BackupFile
 import fr.yannickuhrig.vyzo.platform.Platform
@@ -37,6 +38,12 @@ class AndroidPlatform(private val context: Context) : Platform {
     override val appVersion: String = BuildConfig.VERSION_NAME
     override val appVersionCode: Int = BuildConfig.VERSION_CODE
     override val deviceModel: String get() = "${Build.MANUFACTURER} ${Build.MODEL}"
+    override val stableDeviceId: String by lazy {
+        val raw = runCatching { Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) }.getOrNull().orEmpty().trim()
+        // L'identifiant factice des vieux émulateurs ne permet pas de distinguer les appareils.
+        if (raw.isBlank() || raw.equals("9774d56d682e549c", ignoreCase = true)) ""
+        else "and-${ProfileManager.sha256("vyzo-android:$raw").take(32)}"
+    }
     override val systemVersion: String get() = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
     override val filesDir: File get() = context.filesDir
     override val cloudUrl: String = BuildConfig.SUPABASE_URL

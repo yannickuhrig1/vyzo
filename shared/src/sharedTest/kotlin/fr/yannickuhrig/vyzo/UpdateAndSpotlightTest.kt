@@ -1,7 +1,13 @@
 package fr.yannickuhrig.vyzo
 
+import fr.yannickuhrig.vyzo.data.repo.GroupItem
+import fr.yannickuhrig.vyzo.data.repo.GroupKind
 import fr.yannickuhrig.vyzo.data.repo.Repository
+import fr.yannickuhrig.vyzo.ui.live.LiveGroupLine
+import fr.yannickuhrig.vyzo.ui.live.LiveSection
+import fr.yannickuhrig.vyzo.ui.live.liveGroupLines
 import fr.yannickuhrig.vyzo.ui.vod.VodCard
+import fr.yannickuhrig.vyzo.ui.vod.vodHeroPick
 import fr.yannickuhrig.vyzo.ui.vod.vodSpotlightPick
 import fr.yannickuhrig.vyzo.update.AppUpdater
 import fr.yannickuhrig.vyzo.update.UpdateInfo
@@ -61,5 +67,44 @@ class UpdateAndSpotlightTest {
         val plotsOnly = listOf(card(0, 9f), card(1, 6f, plot = "Résumé"), card(2, 7f), card(3, 8f, plot = "R"))
         assertEquals("m3", vodSpotlightPick(plotsOnly, null)?.uid)
         assertEquals("m1", vodSpotlightPick(plotsOnly, Repository.KEY_CONTINUE)?.uid)
+    }
+
+    @Test
+    fun heroPickFallsBackToBestPosterOrFirstForSmallLists() {
+        val small = listOf(
+            VodCard(uid = "a", title = "A", poster = "pa", rating = 6.2f),
+            VodCard(uid = "b", title = "B", poster = "pb", rating = 8.5f),
+        )
+        assertNull(vodSpotlightPick(small, null))
+        assertEquals("b", vodHeroPick(small, null)?.uid)
+
+        val noArt = listOf(card(0, 9f), card(1, 5f))
+        assertEquals("m0", vodHeroPick(noArt, null)?.uid)
+        assertNull(vodHeroPick(emptyList(), null))
+    }
+
+    @Test
+    fun liveGroupLinesInsertSectionHeadersWhenSectionChanges() {
+        val groups = listOf(
+            GroupItem(Repository.KEY_ALL, "Toutes", GroupKind.ALL, 12),
+            GroupItem(Repository.KEY_FAVORITES, "Favoris", GroupKind.FAVORITES, 2),
+            GroupItem("ug:1", "Soirée", GroupKind.USER, 4),
+            GroupItem("cat:sport", "Sport", GroupKind.CATEGORY, 5),
+            GroupItem("cat:cinema", "Cinéma", GroupKind.CATEGORY, 7),
+        )
+        val lines = liveGroupLines(groups)
+        assertEquals(
+            listOf(
+                LiveGroupLine.Header(LiveSection.LIBRARY),
+                LiveGroupLine.Entry(groups[0]),
+                LiveGroupLine.Entry(groups[1]),
+                LiveGroupLine.Header(LiveSection.USER),
+                LiveGroupLine.Entry(groups[2]),
+                LiveGroupLine.Header(LiveSection.CATEGORIES),
+                LiveGroupLine.Entry(groups[3]),
+                LiveGroupLine.Entry(groups[4]),
+            ),
+            lines,
+        )
     }
 }

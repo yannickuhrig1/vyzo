@@ -635,4 +635,67 @@ class TvNavScreenTest : ScreensBase() {
         assertTrue(shown("1:40:00"))
         assertTrue(shown("Se termine à"))
     }
+
+    /**
+     * Menu → « Changer de profil » → « Gérer les profils » doit ouvrir « Profils du foyer » avec le focus sur un
+     * profil, jamais sur le logo Vyzo + numéro de version dans le rail gauche ; fermer un dialogue garde le focus
+     * dans la liste.
+     */
+    @Test fun gererLesProfilsDepuisChangerDeProfilGardeLeFocusDansLaListe() {
+        runBlocking {
+            app.container.profiles.create("Yannick", avatar = "rocket")
+        }
+        startOnHome()
+        shoot("tv_profils_focus", FormFactor.TV, 4000, capture = false, after = {
+            // Avec deux profils, l'écran de démarrage « Qui regarde ? » s'ouvre en premier : on choisit Principal.
+            assertTrue("L'écran de démarrage « Qui regarde ? » doit s'afficher", shown("Qui regarde ?"))
+            press(Key.DirectionCenter)
+            settle()
+
+            press(Key.DirectionDown)
+            settle()
+            back()
+            assertEquals("Accueil", focused())
+            press(Key.DirectionUp)
+            assertEquals("Recherche", focused())
+            press(Key.DirectionUp)
+            assertTrue("▲ depuis Recherche doit atteindre le profil dans le rail : ${focused()}", focused().contains("Principal"))
+            // Sans code coffre-fort, monter encore ne doit pas quitter vers le logo du menu.
+            press(Key.DirectionUp)
+            assertTrue("Le logo ne doit pas prendre le focus sans code : ${focused()}", focused().contains("Principal"))
+
+            press(Key.DirectionCenter)
+            settle(800)
+            assertTrue("L'écran « Qui regarde ? » doit s'ouvrir", shown("Qui regarde ?"))
+
+            // Ouvre « Gérer les profils » (à la télécommande) : le focus doit entrer dans Profils du foyer.
+            var steps = 0
+            while (!focused().contains("Gérer les profils") && steps < 6) {
+                press(Key.DirectionDown)
+                steps++
+            }
+            assertTrue("Le bouton « Gérer les profils » doit être atteignable : ${focused()}", focused().contains("Gérer les profils"))
+            press(Key.DirectionCenter)
+            settle(800)
+            assertEquals("« Qui regarde ? » doit se fermer", 0, compose.onAllNodesWithText("Qui regarde ?").fetchSemanticsNodes().size)
+            assertTrue("« Profils du foyer » doit s'afficher", shown("PROFILS DU FOYER") || shown("Ajouter un profil"))
+            val f = focused()
+            assertTrue("Le focus doit aller sur un profil (et non sur le logo/version) : $f", f.contains("Principal") || f.contains("Yannick"))
+            assertFalse("Le focus ne doit pas aller sur le logo/version : $f", f.contains("v1.") || f.contains("Vyzo"))
+
+            // Ouvrir un profil → « Avatar et couleur » → fermer garde le focus sur le profil (et hors du logo).
+            press(Key.DirectionCenter)
+            settle(400)
+            assertTrue("Le menu d'actions du profil doit s'ouvrir", shown("Avatar et couleur"))
+            compose.onNodeWithText("Avatar et couleur").performClick()
+            settle(400)
+            assertTrue("La fenêtre « Avatar et couleur » doit s'ouvrir", shown("Initiale"))
+
+            compose.onNodeWithText("Terminé").performClick()
+            settle(400)
+            val afterDialog = focused()
+            assertTrue("Le focus doit rester sur un profil après fermeture du dialogue : $afterDialog", afterDialog.contains("Principal") || afterDialog.contains("Yannick"))
+            assertFalse("Le focus ne doit pas quitter vers le logo/version : $afterDialog", afterDialog.contains("v1.") || afterDialog.contains("Vyzo"))
+        }) { WholeApp() }
+    }
 }

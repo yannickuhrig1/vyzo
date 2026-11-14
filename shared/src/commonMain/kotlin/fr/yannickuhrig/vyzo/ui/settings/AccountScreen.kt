@@ -221,6 +221,9 @@ fun AccountScreen() {
         }
 
         item { SectionTitle("Compte Vyzo") }
+        if (status.sessionExpired && status.error != null) {
+            item { Text(status.error.orEmpty(), color = VyzoColors.Red, modifier = Modifier.padding(bottom = 10.dp)) }
+        }
         item {
             Text(
                 "Un compte pour le foyer : les playlists, les profils, leurs favoris et où chacun en est dans ses films et séries se retrouvent " +

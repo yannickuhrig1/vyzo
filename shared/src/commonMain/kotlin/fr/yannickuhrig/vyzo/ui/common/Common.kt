@@ -20,12 +20,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
@@ -94,6 +98,7 @@ fun Tile(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     onFocus: (() -> Unit)? = null,
+    onHover: (() -> Unit)? = null,
     shape: Shape = RoundedCornerShape(10.dp),
     selected: Boolean = false,
     focusScale: Float = 1.03f,
@@ -111,6 +116,9 @@ fun Tile(
     val focusRequester = remember { FocusRequester() }
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    if (desktop && onHover != null) {
+        LaunchedEffect(hovered) { if (hovered) onHover() }
+    }
     val lifted = desktop && hoverScale > 1f && hovered
     val scale by animateFloatAsState(
         when {
@@ -304,6 +312,57 @@ fun IconLabel(icon: ImageVector, text: String, modifier: Modifier = Modifier, ti
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, Modifier.size(size), tint = tint)
         Text(" $text", style = MaterialTheme.typography.bodySmall, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Titre d'une rubrique de la liste latérale (« BIBLIOTHÈQUE », « GENRES », « CATÉGORIES »). */
+@Composable
+fun RailSectionHeader(text: String, first: Boolean) {
+    Text(
+        text.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp,
+        color = VyzoColors.TextDim.copy(alpha = 0.75f), maxLines = 1,
+        modifier = Modifier.padding(start = 14.dp, top = if (first) 4.dp else 18.dp, bottom = 6.dp),
+    )
+}
+
+/** Entrée de la liste latérale : la sélection est teintée de l'accent, son compteur dans une pastille. */
+@Composable
+fun RailChoiceRow(
+    title: String,
+    count: Int,
+    locked: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onFocus: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Tile(
+        onClick = onClick, onFocus = onFocus, onLongClick = onLongClick, shape = shape,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp), focusScale = 1.02f,
+        color = if (selected) VyzoColors.Amber.copy(alpha = 0.1f) else Color.Transparent,
+    ) { focused ->
+        Row(
+            Modifier.fillMaxWidth()
+                .then(if (selected && !focused) Modifier.border(1.dp, VyzoColors.Amber.copy(alpha = 0.35f), shape) else Modifier)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal),
+                color = if (selected && !focused) VyzoColors.Amber else Color.Unspecified,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            when {
+                locked -> Icon(Icons.Default.Lock, "Verrouillé", Modifier.size(16.dp), tint = VyzoColors.Amber)
+                count >= 0 && selected -> Text(
+                    "$count", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = VyzoColors.OnAmber, maxLines = 1,
+                    modifier = Modifier.padding(start = 8.dp).background(VyzoColors.Amber, RoundedCornerShape(50)).padding(horizontal = 7.dp, vertical = 1.dp),
+                )
+                count >= 0 -> Text("$count", style = MaterialTheme.typography.labelMedium, color = VyzoColors.TextDim, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
     }
 }
 

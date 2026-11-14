@@ -10,6 +10,7 @@ import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.db.PlaylistEntity
 import fr.yannickuhrig.vyzo.data.db.SourceType
 import fr.yannickuhrig.vyzo.data.repo.Repository
+import fr.yannickuhrig.vyzo.platform.Platform
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -29,12 +30,20 @@ class DesktopCloudSyncTest {
     private lateinit var supa: MockWebServer
     private lateinit var fake: FakeSupabase
 
-    private inner class Device {
+    private inner class Device(stableId: String? = null) {
         val dir = Files.createTempDirectory("vyzo-cloud").toFile()
         val c: AppContainer = testContainer(dir)
+        val cloudStore = CloudStore(dir.resolve("cloud-test.preferences_pb"))
+        private val testPlatform: Platform? = stableId?.let { sid ->
+            object : Platform by c.platform {
+                override val stableDeviceId: String = sid
+                override val deviceModel: String = sid.ifBlank { dir.name }
+            }
+        }
         val cloud = CloudSync(
             CloudApi(supa.url("/").toString().trimEnd('/'), "cle-test", OkHttpClient()),
-            CloudStore(dir.resolve("cloud-test.preferences_pb")), c.db, c.repo, c.profiles, c.settings, c.scope,
+            cloudStore, c.db, c.repo, c.profiles, c.settings, c.scope,
+            platform = testPlatform,
         )
 
         init {
@@ -177,5 +186,63 @@ class DesktopCloudSyncTest {
         assertEquals(1, fake.rows("recordings").size)
         pc.cloud.sync().getOrThrow()
         assertEquals("Journal", pc.c.db.recordings().findActive("$pp:L:101", start, start + 1_800_000)?.title)
+    }
+
+    @Test
+    fun reconnexionEtReinstallationReconnaissentLAppareilSansDoublon() = runBlocking {
+        val salon = Device(stableId = "and-salon-1")
+        salon.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(1, fake.rows("devices").size)
+        val idInitial = fake.rows("devices").single()["id"].toString().trim('"')
+        assertEquals("and-salon-1", idInitial)
+
+        // Déconnexion puis reconnexion sur la même box : le même appareil est reconnu, aucun doublon.
+        salon.cloud.signOut()
+        salon.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(1, fake.rows("devices").size)
+
+        // Révocation de session (mot de passe changé ailleurs) -> signalée, puis reconnexion sans doublon.
+        fake.revokedUsers = setOf("u-1111")
+        salon.cloudStore.update { it.copy(session = it.session?.copy(expiresAt = 0)) }
+        assertTrue(salon.cloud.sync().isFailure)
+        assertTrue(salon.cloud.status.value.sessionExpired)
+        assertFalse(salon.cloud.status.value.signedIn)
+
+        fake.revokedUsers = emptySet()
+        salon.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertFalse(salon.cloud.status.value.sessionExpired)
+        assertTrue(salon.cloud.status.value.signedIn)
+        assertEquals(1, fake.rows("devices").size)
+
+        // Réinstallation propre (stockage vide) sur la même box : l'empreinte matérielle retrouve le même appareil.
+        val reinstall = Device(stableId = "and-salon-1")
+        reinstall.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(1, fake.rows("devices").size)
+
+        // Une deuxième box du même modèle dans la chambre reste bien un appareil distinct.
+        val chambre = Device(stableId = "and-chambre-2")
+        chambre.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(2, fake.rows("devices").size)
+
+        // Ancien appareil à UUID aléatoire : une reconnexion conserve son UUID d'origine.
+        val ancien = Device(stableId = "")
+        ancien.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(3, fake.rows("devices").size)
+        ancien.cloud.signOut()
+        ancien.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(3, fake.rows("devices").size)
+    }
+
+    @Test
+    fun pingPremierPlanDetecteSessionExpiree() = runBlocking {
+        val tv = Device(stableId = "and-salon-ping")
+        tv.cloud.signIn("foyer@example.fr", "motdepasse")
+        assertEquals(1, fake.rows("devices").size)
+
+        fake.revokedUsers = setOf("u-1111")
+        tv.cloudStore.update { it.copy(session = it.session?.copy(expiresAt = 0)) }
+        tv.cloud.pingDevice(force = true)
+        assertTrue(tv.cloud.status.value.sessionExpired)
+        assertFalse(tv.cloud.status.value.signedIn)
     }
 }

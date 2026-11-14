@@ -131,6 +131,8 @@ data class CloudStatus(
     val vault: VaultState = VaultState.NONE,
     /** Bilan de la dernière connexion : playlists IPTV récupérées depuis le compte, ou pourquoi il n'y en a pas. */
     val restored: String? = null,
+    /** Session révoquée (mot de passe changé ailleurs, etc.) : l'appli demande à se reconnecter. */
+    val sessionExpired: Boolean = false,
 ) {
     val signedIn: Boolean get() = email != null
 }
@@ -277,6 +279,13 @@ class CloudSync(
                 if (_status.value.signedIn && !foreground && keepConnected) sync()
             }
         }
+        // Au premier plan : garde cet appareil en ligne sur le site même sans activité IPTV, et détecte une session révoquée.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(DEVICE_REPORT_MS)
+                if (_status.value.signedIn && foreground) pingDevice()
+            }
+        }
         scope.launch {
             incomingHistoryClear.collect { ev ->
                 val myId = platform?.deviceModel
@@ -314,7 +323,14 @@ class CloudSync(
 
     private suspend fun realtimeAuth(): RealtimeAuth? {
         val s = store.get().session ?: return null
-        return runCatching { RealtimeAuth(token(minValiditySec = 15 * 60L), s.userId) }.getOrNull()
+        return try {
+            RealtimeAuth(token(minValiditySec = 15 * 60L), s.userId)
+        } catch (e: CloudException) {
+            if (e.code == CODE_SESSION_EXPIRED) scope.launch { mutex.withLock { if (store.get().session != null) onSessionExpired(e.message) } }
+            null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     // ------------------------------------------------------------------ Compte
@@ -382,13 +398,21 @@ class CloudSync(
         val previous = data.session
         // Autre compte que le précédent : tout ce qui est local doit partir vers le nouveau.
         if (previous != null && previous.userId != s.userId) markAllDirty()
-        // Même compte : la clé reste, c'est elle qui permet de survivre à une réinitialisation du mot de passe.
+        // Même compte : la clé et les statistiques locales restent ; l'identifiant matériel de l'appareil reste toujours.
         store.update {
-            if (data.vaultUserId == s.userId) CloudData(session = s, vaultKey = data.vaultKey, vaultUserId = s.userId) else CloudData(session = s)
+            if (data.vaultUserId == s.userId) CloudData(
+                session = s,
+                vaultKey = data.vaultKey,
+                vaultUserId = s.userId,
+                deviceId = data.deviceId,
+                usage = data.usage,
+                screenTime = data.screenTime,
+                remoteUsage = data.remoteUsage,
+            ) else CloudData(session = s, deviceId = data.deviceId)
         }
         // Un serveur sans la table chiffrée (ou injoignable) n'empêche pas la connexion au compte.
         val vault = runCatching { sealed.unlock(s, password) }.onFailure { Log.w(TAG, "clé du compte", it) }.getOrNull() ?: sealed.state()
-        _status.value = _status.value.copy(email = s.email, error = null, lastSyncAt = 0, vault = vault, restored = null)
+        _status.value = _status.value.copy(email = s.email, error = null, lastSyncAt = 0, vault = vault, restored = null, sessionExpired = false)
         if (foreground) realtime?.start()
         val before = playlistKeys()
         sync()
@@ -422,7 +446,7 @@ class CloudSync(
         realtime?.stop()
         val s = store.get().session
         mutex.withLock {
-            store.update { CloudData() }
+            store.update { CloudData(deviceId = it.deviceId) }
             markAllDirty()
         }
         _status.value = CloudStatus(configured = api.configured)
@@ -574,15 +598,28 @@ class CloudSync(
         }.onFailure { e ->
             Log.w(TAG, "sync", e)
             if ((e as? CloudException)?.code == CODE_SESSION_EXPIRED) {
-                // Session révoquée ou expirée : il faut se reconnecter.
-                realtime?.stop()
-                store.update { it.copy(session = null) }
-                _status.value = CloudStatus(configured = api.configured, error = e.message)
+                onSessionExpired(e.message)
             } else {
                 _status.value = _status.value.copy(running = false, error = e.message ?: e.toString())
             }
         }
         res
+    }
+
+    private suspend fun onSessionExpired(message: String?) {
+        realtime?.stop()
+        store.update { it.copy(session = null) }
+        _status.value = CloudStatus(configured = api.configured, error = message, sessionExpired = true)
+    }
+
+    /** Signale cet appareil au compte s'il est resté ouvert au premier plan, et détecte une session expirée. */
+    suspend fun pingDevice(force: Boolean = false) = mutex.withLock {
+        val session = store.get().session ?: return@withLock
+        val due = force || System.currentTimeMillis() - lastDeviceReport >= DEVICE_REPORT_MS - 5_000L
+        runCatching { reportDevice(session, force = due) }.onFailure { e ->
+            if ((e as? CloudException)?.code == CODE_SESSION_EXPIRED) onSessionExpired(e.message)
+            else Log.w(TAG, "signalement de l'appareil", e)
+        }
     }
 
     /**
@@ -779,7 +816,7 @@ class CloudSync(
         if (myDeviceId.isNotBlank()) return myDeviceId
         var id = store.get().deviceId
         if (id.isBlank()) {
-            id = java.util.UUID.randomUUID().toString()
+            id = platform?.stableDeviceId?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
             store.update { it.copy(deviceId = id) }
         }
         myDeviceId = id

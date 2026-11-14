@@ -1,24 +1,12 @@
 package fr.yannickuhrig.vyzo.ui.vod
 
-import fr.yannickuhrig.vyzo.ui.common.PosterArt
-import fr.yannickuhrig.vyzo.ui.common.isDesktop
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
-import fr.yannickuhrig.vyzo.ui.common.LocalContainer
-import fr.yannickuhrig.vyzo.ui.common.posterColor
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,8 +25,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,10 +42,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -66,16 +54,23 @@ import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.db.CategoryRow
 import fr.yannickuhrig.vyzo.data.db.ContentKind
 import fr.yannickuhrig.vyzo.data.repo.Repository
-import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.data.vod.Genres
+import fr.yannickuhrig.vyzo.data.vod.VodQualityIndex
 import fr.yannickuhrig.vyzo.ui.common.EmptyState
-import fr.yannickuhrig.vyzo.ui.common.NetImage
+import fr.yannickuhrig.vyzo.ui.common.LocalContainer
+import fr.yannickuhrig.vyzo.ui.common.PosterArt
+import fr.yannickuhrig.vyzo.ui.common.RailChoiceRow
+import fr.yannickuhrig.vyzo.ui.common.RailSectionHeader
 import fr.yannickuhrig.vyzo.ui.common.Tile
 import fr.yannickuhrig.vyzo.ui.common.appViewModel
+import fr.yannickuhrig.vyzo.ui.common.isDesktop
 import fr.yannickuhrig.vyzo.ui.common.isTv
-import fr.yannickuhrig.vyzo.ui.live.GroupRow
+import fr.yannickuhrig.vyzo.ui.common.posterColor
+import fr.yannickuhrig.vyzo.ui.home.HeaderStatusCorner
+import fr.yannickuhrig.vyzo.ui.home.HeroBackdrop
+import fr.yannickuhrig.vyzo.ui.home.HeroHeader
+import fr.yannickuhrig.vyzo.ui.home.HeroKicker
 import fr.yannickuhrig.vyzo.ui.profile.rememberParentalGate
-import androidx.compose.material.icons.filled.Lock
 import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -191,6 +186,12 @@ fun vodSpotlightPick(items: List<VodCard>, selected: String?): VodCard? {
         ?: rich.filter { it.rating <= 10f }.maxByOrNull { it.rating }
         ?: rich.first()
 }
+
+/** Titre mis en avant dans l'en-tête quand aucune affiche n'est sélectionnée (y compris petites catégories). */
+fun vodHeroPick(items: List<VodCard>, selected: String?): VodCard? =
+    vodSpotlightPick(items, selected)
+        ?: items.filter { it.poster.isNotBlank() && it.rating <= 10f }.maxByOrNull { it.rating }
+        ?: items.firstOrNull()
 
 /** « 2026 · Comédie » : année et genre sous une affiche. */
 fun vodCardMeta(year: String, genre: String): String =
@@ -382,220 +383,242 @@ fun VodBrowser(kind: ContentKind, onOpen: (String) -> Unit) {
 
     LaunchedEffect(selected) { selected?.let { vm.select(it) } }
 
+    val gridState = rememberLazyGridState()
+    var focusedIndex by remember { mutableStateOf(-1) }
+    val nearEnd by remember { derivedStateOf { (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= gridState.layoutInfo.totalItemsCount - 12 } }
+    LaunchedEffect(nearEnd, items?.size) { if (nearEnd) vm.nearEnd() }
+    LaunchedEffect(selected, sortOrder) {
+        focusedIndex = -1
+        gridState.scrollToItem(0)
+    }
+
+    val list0 = items
+    val heroPick = remember(list0, selected) { list0?.let { vodHeroPick(it, selected) } }
+    val heroOn = spotlightOn && list0 != null && heroPick != null
+    var spot by remember { mutableStateOf<VodCard?>(null) }
+    LaunchedEffect(heroOn, focusedIndex, list0, heroPick, tv) {
+        if (!spotlightOn || list0 == null || heroPick == null) {
+            spot = null
+            return@LaunchedEffect
+        }
+        val target = if (tv) (list0.getOrNull(focusedIndex) ?: heroPick) else heroPick
+        if (tv && spot != null && target != spot) delay(300)
+        spot = target
+    }
+    val hero = spot.takeIf { heroOn }
+    val defaultTitle = if (kind == ContentKind.MOVIE) "Films" else "Séries"
+    val catTitle = cats.firstOrNull { it.key == selected }?.title ?: defaultTitle
+    val countLabel = items?.let { if (it.size == 1) "1 titre" else "${it.size} titres" }
+    val kicker = listOfNotNull(catTitle, countLabel).joinToString(" · ")
+
     val grid: @Composable (Modifier) -> Unit = { mod ->
-        val state = rememberLazyGridState()
-        val nearEnd by remember { derivedStateOf { (state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= state.layoutInfo.totalItemsCount - 12 } }
-        LaunchedEffect(nearEnd, items?.size) { if (nearEnd) vm.nearEnd() }
-        LaunchedEffect(selected, sortOrder) { state.scrollToItem(0) }
-        Column(mod) {
-            if (items != null && items!!.isNotEmpty()) {
-                VodSortBar(
-                    selected = sortOrder,
-                    onSelect = { vm.toggleSortOrder(it) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = if (tv) 12.dp else 8.dp, vertical = 2.dp),
-                )
+        when {
+            items == null -> Box(mod)
+            items!!.isEmpty() && loadingMore -> Box(mod, contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            items!!.isEmpty() -> EmptyState(
+                when (selected) {
+                    Repository.KEY_CONTINUE -> "Rien à reprendre pour l'instant"
+                    Repository.KEY_FAVORITES -> "Aucun favori"
+                    Repository.KEY_TOP_RATED -> "Aucune note fournie pour l'instant"
+                    else -> "Aucun contenu dans cette catégorie"
+                },
+                if (selected == Repository.KEY_FAVORITES) "Ajoute un titre aux favoris depuis sa fiche." else "",
+                Icons.Default.Movie, mod,
+            )
+            else -> {
+                val list = items!!
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(if (isDesktop()) 168.dp else if (tv) 148.dp else 106.dp),
+                    state = gridState,
+                    // ► depuis les catégories revient sur la dernière affiche parcourue.
+                    modifier = mod.focusRestorer(),
+                    contentPadding = PaddingValues(if (tv) 12.dp else 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (tv) 14.dp else 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (tv) 16.dp else 10.dp),
+                ) {
+                    itemsIndexed(list, key = { _, it -> it.uid }) { i, card ->
+                        PosterCard(
+                            card,
+                            onClick = { onOpen(card.uid) },
+                            onFocus = if (tv) ({ focusedIndex = i }) else null,
+                            onHover = if (tv) ({ focusedIndex = i }) else null,
+                        )
+                    }
+                    if (loadingMore) {
+                        item { Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp)) } }
+                    }
+                }
             }
-            when {
-                items == null -> Box(Modifier.fillMaxSize())
-                items!!.isEmpty() && loadingMore -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                items!!.isEmpty() -> EmptyState(
-                    when (selected) {
-                        Repository.KEY_CONTINUE -> "Rien à reprendre pour l'instant"
-                        Repository.KEY_FAVORITES -> "Aucun favori"
-                        Repository.KEY_TOP_RATED -> "Aucune note fournie pour l'instant"
-                        else -> "Aucun contenu dans cette catégorie"
-                    },
-                    if (selected == Repository.KEY_FAVORITES) "Ajoute un titre aux favoris depuis sa fiche." else "",
-                    Icons.Default.Movie, Modifier.fillMaxSize(),
-                )
-                else -> {
-                    val list = items!!
-                    val featured = remember(list, selected, spotlightOn) { if (spotlightOn) vodSpotlightPick(list, selected) else null }
-                    val eyebrow = if (selected == Repository.KEY_CONTINUE) "Reprendre" else "À l'affiche · " + (cats.firstOrNull { it.key == selected }?.title ?: "")
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(if (isDesktop()) 168.dp else if (tv) 148.dp else 106.dp),
-                        state = state,
-                        // ► depuis les catégories revient sur la dernière affiche parcourue.
-                        modifier = Modifier.weight(1f).fillMaxWidth().focusRestorer(),
-                        contentPadding = PaddingValues(if (tv) 12.dp else 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if (tv) 14.dp else 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(if (tv) 16.dp else 10.dp),
-                    ) {
-                        // Le bandeau défile avec les affiches : il ne prend pas de place une fois qu'on descend.
-                        if (featured != null) {
-                            item(key = "mise-en-avant", span = { GridItemSpan(maxLineSpan) }) {
-                                VodSpotlight(featured, eyebrow, onOpen = { onOpen(featured.uid) }, Modifier.padding(bottom = 6.dp))
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        HeroBackdrop(
+            imageUrl = hero?.let { it.backdrop.ifBlank { it.poster } },
+            accentColor = hero?.let { posterColor(it.title, it.genre) },
+            tv = tv,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (tv) {
+            var focusedCat by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(focusedCat) {
+                val k = focusedCat ?: return@LaunchedEffect
+                delay(300)
+                vm.select(k)
+            }
+            val lines = remember(cats) { vodCategoryLines(cats) }
+            Row(Modifier.fillMaxSize().padding(start = 12.dp, top = 16.dp, end = 20.dp)) {
+                // ◄ depuis les affiches revient sur la catégorie ouverte.
+                LazyColumn(Modifier.width(250.dp).fillMaxHeight().focusRestorer(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    items(lines, key = { it.key }) { line ->
+                        when (line) {
+                            is VodCategoryLine.Header -> RailSectionHeader(line.section.label, first = line === lines.first())
+                            is VodCategoryLine.Entry -> {
+                                val cat = line.category
+                                RailChoiceRow(
+                                    cat.title, cat.count, cat.locked, selected = cat.key == selected,
+                                    onClick = { pick(cat) }, onFocus = { if (!cat.locked) focusedCat = cat.key },
+                                )
                             }
                         }
-                        itemsIndexed(list, key = { _, it -> it.uid }) { _, card ->
-                            PosterCard(card, onClick = { onOpen(card.uid) })
-                        }
-                        if (loadingMore) {
-                            item { Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp)) } }
-                        }
                     }
                 }
-            }
-        }
-    }
-
-    if (tv) {
-        var focusedCat by remember { mutableStateOf<String?>(null) }
-        LaunchedEffect(focusedCat) {
-            val k = focusedCat ?: return@LaunchedEffect
-            delay(300)
-            vm.select(k)
-        }
-        val lines = remember(cats) { vodCategoryLines(cats) }
-        Row(Modifier.fillMaxSize().padding(start = 8.dp, top = 8.dp, end = 12.dp)) {
-            // ◄ depuis les affiches revient sur la catégorie ouverte.
-            LazyColumn(Modifier.width(250.dp).fillMaxHeight().focusRestorer(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(lines, key = { it.key }) { line ->
-                    when (line) {
-                        is VodCategoryLine.Header -> VodSectionHeader(line.section.label, first = line === lines.first())
-                        is VodCategoryLine.Entry -> {
-                            val cat = line.category
-                            VodCategoryRow(cat, selected = cat.key == selected, onClick = { pick(cat) }, onFocus = { if (!cat.locked) focusedCat = cat.key })
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.width(8.dp))
-            grid(Modifier.weight(1f).fillMaxHeight())
-        }
-    } else {
-        Column(Modifier.fillMaxSize()) {
-            val chips = rememberLazyListState()
-            LazyRow(state = chips, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(cats, key = { it.key }) { cat ->
-                    FilterChip(
-                        selected = cat.key == selected, onClick = { pick(cat) }, label = { Text(cat.title, maxLines = 1) },
-                        leadingIcon = if (cat.locked) ({ Icon(Icons.Default.Lock, "Verrouillé", Modifier.size(16.dp)) }) else null,
-                    )
-                }
-            }
-            grid(Modifier.weight(1f).fillMaxWidth())
-        }
-    }
-}
-
-/** Titre d'une rubrique de la liste des catégories (« BIBLIOTHÈQUE », « GENRES »…). */
-@Composable
-private fun VodSectionHeader(text: String, first: Boolean) {
-    Text(
-        text.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp,
-        color = VyzoColors.TextDim.copy(alpha = 0.75f), maxLines = 1,
-        modifier = Modifier.padding(start = 14.dp, top = if (first) 4.dp else 18.dp, bottom = 6.dp),
-    )
-}
-
-/** Catégorie de la liste : la catégorie ouverte est teintée de l'accent, son nombre de titres dans une pastille. */
-@Composable
-private fun VodCategoryRow(cat: VodCategory, selected: Boolean, onClick: () -> Unit, onFocus: () -> Unit) {
-    val shape = RoundedCornerShape(10.dp)
-    Tile(
-        onClick = onClick, onFocus = onFocus, shape = shape,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp), focusScale = 1.02f,
-        color = if (selected) VyzoColors.Amber.copy(alpha = 0.1f) else Color.Transparent,
-    ) { focused ->
-        Row(
-            Modifier.fillMaxWidth()
-                .then(if (selected && !focused) Modifier.border(1.dp, VyzoColors.Amber.copy(alpha = 0.35f), shape) else Modifier)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                cat.title,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal),
-                color = if (selected && !focused) VyzoColors.Amber else Color.Unspecified,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
-            when {
-                cat.locked -> Icon(Icons.Default.Lock, "Verrouillé", Modifier.size(16.dp), tint = VyzoColors.Amber)
-                cat.count >= 0 && selected -> Text(
-                    "${cat.count}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = VyzoColors.OnAmber, maxLines = 1,
-                    modifier = Modifier.padding(start = 8.dp).background(VyzoColors.Amber, RoundedCornerShape(50)).padding(horizontal = 7.dp, vertical = 1.dp),
-                )
-                cat.count >= 0 -> Text("${cat.count}", style = MaterialTheme.typography.labelMedium, color = VyzoColors.TextDim, modifier = Modifier.padding(start = 8.dp))
-            }
-        }
-    }
-}
-
-/**
- * Bandeau du titre mis en avant, en tête de la grille : image de fond fondue vers la gauche,
- * étiquette, note, résumé et, sur grand écran, l'affiche à droite. Un clic ouvre la fiche.
- */
-@Composable
-fun VodSpotlight(card: VodCard, eyebrow: String, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val wide = isTv() || isDesktop()
-    val shape = RoundedCornerShape(16.dp)
-    val base = remember(card.title, card.genre) { posterColor(card.title, card.genre) }
-    val bg = VyzoColors.Background
-    Tile(
-        onClick = onOpen, modifier = modifier.fillMaxWidth(), shape = shape, focusScale = 1.01f, hoverScale = 1.005f,
-        color = Color.Transparent, focusedColor = Color.Transparent,
-    ) { focused ->
-        Box(
-            Modifier.fillMaxWidth().height(if (wide) 220.dp else 170.dp).clip(shape)
-                .background(Brush.linearGradient(listOf(lerp(base, Color.Black, 0.55f), VyzoColors.Surface, lerp(base, Color.Black, 0.8f))))
-                .border(if (focused) 2.dp else 1.dp, if (focused) VyzoColors.Amber else Color.White.copy(alpha = 0.08f), shape),
-        ) {
-            if (card.backdrop.isNotBlank()) {
-                NetImage(
-                    card.backdrop, Modifier.fillMaxHeight().fillMaxWidth(if (wide) 0.66f else 1f).align(Alignment.CenterEnd),
-                    contentScale = ContentScale.Crop,
-                )
-                Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to bg, if (wide) 0.4f to bg.copy(alpha = 0.85f) else 0.55f to bg.copy(alpha = 0.7f), 1f to bg.copy(alpha = 0.15f))))
-            }
-            // Halo de la couleur du genre, en haut à gauche.
-            Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(base.copy(alpha = 0.28f), Color.Transparent), radius = 700f)))
-            Row(Modifier.fillMaxSize().padding(horizontal = if (wide) 28.dp else 16.dp, vertical = if (wide) 20.dp else 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (wide) 8.dp else 5.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            eyebrow.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = VyzoColors.OnAmber, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false).background(VyzoColors.Amber, RoundedCornerShape(5.dp)).padding(horizontal = 7.dp, vertical = 2.dp),
-                        )
-                        if (card.uhd) {
-                            Text(
-                                "4K", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1,
-                                modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(5.dp)).border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(5.dp))
-                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.Top) {
+                        if (hero != null) {
+                            HeroHeader(
+                                kicker = kicker,
+                                title = hero.title,
+                                tv = true,
+                                modifier = Modifier.weight(1f),
+                                rating = hero.rating,
+                                uhd = hero.uhd,
+                                meta = listOf(hero.year, hero.genre.split(',', '/', '|').firstOrNull()?.trim().orEmpty()),
+                                plot = hero.plot,
+                                minHeight = 165.dp,
+                                titleMaxLines = 1,
+                                plotMaxLines = 2,
+                                onClick = { onOpen(hero.uid) },
                             )
+                        } else {
+                            Column(Modifier.weight(1f).padding(top = 8.dp, bottom = 8.dp)) {
+                                HeroKicker(defaultTitle)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.padding(top = 4.dp),
+                                ) {
+                                    Text(
+                                        catTitle,
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    countLabel?.let { Text(it, style = MaterialTheme.typography.titleSmall, color = VyzoColors.TextDim) }
+                                }
+                            }
                         }
-                        if (card.rating > 0f && card.rating <= 10f) {
-                            Icon(Icons.Default.Star, null, Modifier.size(14.dp), tint = VyzoColors.Amber)
-                            Text("%.1f".format(card.rating), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = VyzoColors.Amber)
+                        HeaderStatusCorner(tv = true, focusableWeather = false)
+                    }
+                    if (!items.isNullOrEmpty()) {
+                        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            VodSortBar(
+                                selected = sortOrder,
+                                onSelect = { vm.toggleSortOrder(it) },
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (focusedIndex >= 0) {
+                                Text(
+                                    "${minOf(focusedIndex + 1, items!!.size)} / ${items!!.size}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    modifier = Modifier.clip(RoundedCornerShape(50)).background(VyzoColors.SurfaceHigh).padding(horizontal = 12.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
-                    Text(
-                        card.title, style = if (wide) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    val meta = vodCardMeta(card.year, card.genre)
-                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelMedium, color = VyzoColors.TextDim, maxLines = 1)
-                    if (card.plot.isNotBlank()) {
-                        Text(
-                            card.plot, style = if (wide) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                            color = VyzoColors.Text.copy(alpha = 0.85f), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth(if (wide) 0.75f else 1f),
+                    grid(Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    if (hero != null) {
+                        HeroHeader(
+                            kicker = kicker,
+                            title = hero.title,
+                            tv = false,
+                            modifier = Modifier.weight(1f),
+                            rating = hero.rating,
+                            uhd = hero.uhd,
+                            meta = listOf(hero.year, hero.genre.split(',', '/', '|').firstOrNull()?.trim().orEmpty()),
+                            plot = hero.plot,
+                            minHeight = 0.dp,
+                            titleMaxLines = 1,
+                            plotMaxLines = 2,
+                            onClick = { onOpen(hero.uid) },
+                        )
+                    } else {
+                        Column(Modifier.weight(1f).padding(top = 4.dp)) {
+                            HeroKicker(defaultTitle)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(top = 2.dp),
+                            ) {
+                                Text(
+                                    catTitle,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                countLabel?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = VyzoColors.TextDim) }
+                            }
+                        }
+                    }
+                    HeaderStatusCorner(tv = false, focusableWeather = false)
+                }
+                val chips = rememberLazyListState()
+                LazyRow(state = chips, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(cats, key = { it.key }) { cat ->
+                        FilterChip(
+                            selected = cat.key == selected, onClick = { pick(cat) }, label = { Text(cat.title, maxLines = 1) },
+                            leadingIcon = if (cat.locked) ({ Icon(Icons.Default.Lock, "Verrouillé", Modifier.size(16.dp)) }) else null,
                         )
                     }
                 }
-                if (wide) {
-                    Spacer(Modifier.width(24.dp))
-                    PosterArt(card.title, card.poster, 0f, false, Modifier.width(118.dp).shadow(18.dp, RoundedCornerShape(8.dp)), genre = card.genre)
+                if (!items.isNullOrEmpty()) {
+                    VodSortBar(
+                        selected = sortOrder,
+                        onSelect = { vm.toggleSortOrder(it) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
                 }
+                grid(Modifier.weight(1f).fillMaxWidth())
             }
         }
     }
 }
 
 @Composable
-fun PosterCard(card: VodCard, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Tile(onClick = onClick, modifier = modifier, focusScale = 1.06f, hoverScale = 1.05f, shape = RoundedCornerShape(10.dp)) { focused ->
+fun PosterCard(
+    card: VodCard,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFocus: (() -> Unit)? = null,
+    onHover: (() -> Unit)? = null,
+) {
+    Tile(onClick = onClick, onFocus = onFocus, onHover = onHover, modifier = modifier, focusScale = 1.06f, hoverScale = 1.05f, shape = RoundedCornerShape(10.dp)) { focused ->
         Column(Modifier.padding(4.dp)) {
             PosterArt(
                 card.title, card.poster, card.rating, card.uhd,

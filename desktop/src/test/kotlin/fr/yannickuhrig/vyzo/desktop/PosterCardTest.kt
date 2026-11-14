@@ -92,4 +92,20 @@ class PosterCardTest {
         show(desktop = false, cards = arrayOf(card()))
         assertEquals(false, hoverWidens())
     }
+
+    @Test
+    fun leSurvolNotifieLeBandeauSurPc() {
+        var hovered = 0
+        rule.setContent {
+            CompositionLocalProvider(LocalDesktop provides true, LocalFormFactor provides FormFactor.TV) {
+                VyzoTheme {
+                    PosterCard(card(), onClick = {}, Modifier.width(170.dp).testTag("Dune"), onHover = { hovered++ })
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("Dune").performMouseInput { moveTo(center) }
+        rule.waitForIdle()
+        assertTrue(hovered > 0)
+    }
 }

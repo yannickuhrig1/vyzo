@@ -2,8 +2,6 @@ package fr.yannickuhrig.vyzo.ui.home
 
 import fr.yannickuhrig.vyzo.ui.common.PosterArt
 import fr.yannickuhrig.vyzo.ui.common.isDesktop
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -107,11 +104,7 @@ fun HomeScreen(
     val tv = isTv()
     val rows by vm.rows.collectAsState()
     val hero by vm.hero.collectAsState()
-    val settings by c.settings.state.collectAsState()
-    val weather by vm.weather.collectAsState()
-    val place by vm.weatherPlace.collectAsState()
     var channelMenu by remember { mutableStateOf<Pair<ChannelEntity, String>?>(null) }
-    var weatherOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.refreshApps() }
 
@@ -126,35 +119,36 @@ fun HomeScreen(
 
     Box(Modifier.fillMaxSize()) {
         // Arrière-plan : l'image du titre mis en avant, fondue vers le fond de l'appli à gauche et en bas.
-        Crossfade(hero?.let { it.backdrop.ifBlank { it.poster } }, animationSpec = tween(700), label = "homeBackdrop") { url ->
-            if (url != null) {
-                Box(Modifier.fillMaxSize()) {
-                    NetImage(url, Modifier.fillMaxWidth().fillMaxHeight(if (tv) 0.72f else 0.45f).align(Alignment.TopEnd), contentScale = ContentScale.Crop)
-                }
-            }
-        }
-        val bg = MaterialTheme.colorScheme.background
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to bg, 0.55f to bg.copy(alpha = 0.75f), 1f to bg.copy(alpha = 0.15f))))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 0.35f to bg.copy(alpha = 0.35f), 0.62f to bg)))
+        HeroBackdrop(hero?.let { it.backdrop.ifBlank { it.poster } }, tv = tv, modifier = Modifier.fillMaxSize())
 
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().padding(start = if (tv) 32.dp else 16.dp, end = if (tv) 28.dp else 12.dp, top = if (tv) 20.dp else 8.dp),
                 verticalAlignment = Alignment.Top,
             ) {
-                HeroInfo(hero, Modifier.weight(1f), tv)
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (settings.homeClock) Clock(tv)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (place != null) WeatherChip(weather, place!!.name) { weatherOpen = true }
+                HeroHeader(
+                    kicker = hero?.let { if (it.kind == ContentKind.MOVIE) "Film" else "Série" }.orEmpty(),
+                    title = hero?.title,
+                    tv = tv,
+                    modifier = Modifier.weight(1f),
+                    rating = hero?.rating ?: 0f,
+                    uhd = hero?.uhd ?: false,
+                    meta = hero?.let { listOf(it.year, it.genre.split(',', '/', '|').firstOrNull()?.trim().orEmpty()) } ?: emptyList(),
+                    plot = hero?.plot.orEmpty(),
+                    minHeight = if (tv) 210.dp else 0.dp,
+                    plotMaxLines = if (tv) 3 else 2,
+                )
+                HeaderStatusCorner(
+                    tv = tv,
+                    extraActions = {
                         Tile(onClick = onCustomize, shape = RoundedCornerShape(50), color = Color.Black.copy(alpha = 0.35f)) {
                             Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Edit, null, Modifier.size(16.dp))
                                 if (tv) Text("Personnaliser", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp))
                             }
                         }
-                    }
-                }
+                    },
+                )
             }
 
             val list = rows
@@ -186,42 +180,6 @@ fun HomeScreen(
 
     channelMenu?.let { (ch, group) ->
         ChannelMenu(ch, onDismiss = { channelMenu = null }, onWatch = { onPlayChannel(ch.uid, group) })
-    }
-    if (weatherOpen) WeatherDialog(place?.name.orEmpty(), weather) { weatherOpen = false }
-}
-
-@Composable
-private fun HeroInfo(hero: VodItem?, modifier: Modifier, tv: Boolean) {
-    // Sur TV, la zone haute laisse voir l'image de fond, comme sur un lanceur.
-    Column(modifier.padding(end = 24.dp).heightIn(min = if (tv) 230.dp else 0.dp), verticalArrangement = Arrangement.Bottom) {
-        if (hero == null) {
-            Spacer(Modifier.height(if (tv) 0.dp else 40.dp))
-            return@Column
-        }
-        Text(
-            if (hero.kind == ContentKind.MOVIE) "FILM" else "SÉRIE",
-            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold,
-        )
-        Text(
-            hero.title, style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-            if (hero.rating > 0f) {
-                Icon(Icons.Default.Star, null, Modifier.size(16.dp), tint = VyzoColors.Amber)
-                Text(" %.1f".format(hero.rating), style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.width(12.dp))
-            }
-            val meta = listOf(hero.year, hero.genre.split(',', '/', '|').firstOrNull()?.trim().orEmpty()).filter { it.isNotBlank() }
-            if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelLarge, color = VyzoColors.TextDim)
-        }
-        if (hero.plot.isNotBlank()) {
-            Text(
-                hero.plot, style = MaterialTheme.typography.bodyMedium, color = VyzoColors.Text.copy(alpha = 0.85f),
-                maxLines = if (tv) 3 else 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 8.dp).then(if (tv) Modifier.width(560.dp) else Modifier),
-            )
-        }
     }
 }
 
@@ -407,8 +365,8 @@ fun weatherIcon(code: Int): ImageVector = when (code) {
 }
 
 @Composable
-fun WeatherChip(weather: Weather?, city: String, onClick: () -> Unit) {
-    Tile(onClick = onClick, shape = RoundedCornerShape(50), color = Color.Black.copy(alpha = 0.35f)) {
+fun WeatherChip(weather: Weather?, city: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Tile(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(50), color = Color.Black.copy(alpha = 0.35f)) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (weather == null) {
                 Text(city, style = MaterialTheme.typography.labelLarge, color = VyzoColors.TextDim)

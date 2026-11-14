@@ -305,7 +305,10 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
     var reminderPopup by remember { mutableStateOf<fr.yannickuhrig.vyzo.data.db.ReminderEntity?>(null) }
     val cloudStatus by c.cloud.status.collectAsState()
     var vaultAsked by rememberSaveable { mutableStateOf(false) }
+    var expiredAsked by rememberSaveable { mutableStateOf(false) }
     var profilePicker by remember { mutableStateOf(false) }
+    val screenFocus = remember { FocusRequester() }
+    var restoreScreenOnPickerClose by remember { mutableStateOf(false) }
     // Télécommande : une entrée du rail par écran principal, pour y ramener le focus.
     val railItems = remember { tvDestinations.associate { it.route to FocusRequester() } }
     var railFocused by remember { mutableStateOf(false) }
@@ -476,6 +479,22 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
             onDismiss = { vaultAsked = true },
         )
     }
+    LaunchedEffect(cloudStatus.signedIn) { if (cloudStatus.signedIn) expiredAsked = false }
+    if (!expiredAsked && cloudStatus.sessionExpired && !isPlayer) {
+        ActionDialog(
+            title = "Reconnecte-toi au compte Vyzo",
+            body = "La session de cet appareil a expiré (mot de passe modifié ou déconnexion à distance). " +
+                "Reconnecte-toi pour retrouver la synchronisation et le contrôle depuis le site.",
+            actions = listOf(
+                ActionItem("Se reconnecter", Icons.Default.Key) {
+                    expiredAsked = true
+                    nav.navigate(Routes.ACCOUNT) { launchSingleTop = true }
+                },
+                ActionItem("Plus tard") { expiredAsked = true },
+            ),
+            onDismiss = { expiredAsked = true },
+        )
+    }
     reminderPopup?.let { r ->
         ActionDialog(
             title = "C'est l'heure : ${r.title}",
@@ -509,7 +528,7 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
         ) {
             if (!tv && !isPlayer) PhoneTopBar(nav, route, onProfile = { profilePicker = true })
             // Variante : en revenant du menu, la télécommande retrouve l'élément qu'elle avait quitté.
-            Box(Modifier.weight(1f).fillMaxWidth().then(if (variantNav != null) Modifier.focusRestorer().focusGroup() else Modifier)) {
+            Box(Modifier.weight(1f).fillMaxWidth().focusRequester(screenFocus).then(if (variantNav != null) Modifier.focusRestorer().focusGroup() else Modifier)) {
                 NavGraph(nav)
             }
             // Télécommande : sur un écran principal, Retour ouvre d'abord le menu de gauche (sur l'écran affiché).
@@ -603,15 +622,22 @@ fun MainNav(launch: MutableStateFlow<LaunchRequest?>) {
                 ),
             )
         }
+        LaunchedEffect(profilePicker) {
+            if (!profilePicker && restoreScreenOnPickerClose) {
+                restoreScreenOnPickerClose = false
+                delay(80)
+                runCatching { screenFocus.requestFocus() }
+            }
+        }
         if (profilePicker) {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 WhoIsWatchingScreen(
-                    onPicked = { profilePicker = false },
-                    onManage = { profilePicker = false; nav.navigate(Routes.PROFILES) { launchSingleTop = true } },
-                    onClose = { profilePicker = false },
+                    onPicked = { restoreScreenOnPickerClose = true; profilePicker = false },
+                    onManage = { restoreScreenOnPickerClose = false; profilePicker = false; nav.navigate(Routes.PROFILES) { launchSingleTop = true } },
+                    onClose = { restoreScreenOnPickerClose = true; profilePicker = false },
                 )
             }
-            PlatformBackHandler { profilePicker = false }
+            PlatformBackHandler { restoreScreenOnPickerClose = true; profilePicker = false }
         }
         variantNav?.screensaver?.invoke(!isPlayer)
     }
@@ -1119,7 +1145,7 @@ private fun SideRail(
             .focusProperties {
                 onEnter = {
                     if (requestedFocusDirection != FocusDirection.Enter) {
-                        items[route]?.let { r -> runCatching { r.requestFocus() } }
+                        (items[route] ?: items[Routes.SETTINGS])?.let { r -> runCatching { r.requestFocus() } }
                     }
                 }
             }
@@ -1132,6 +1158,7 @@ private fun SideRail(
             Modifier
                 .height(44.dp)
                 .padding(start = 8.dp)
+                .focusProperties { canFocus = pinSet }
                 .onFocusChanged { logoFocused = it.isFocused }
                 // Le logo prend le focus à la télécommande : sans contour, on ne voyait plus où l'on était.
                 .then(if (logoFocused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)) else Modifier)

@@ -61,6 +61,7 @@ import fr.yannickuhrig.vyzo.ui.NavLayout
 import fr.yannickuhrig.vyzo.ui.NavPosition
 import fr.yannickuhrig.vyzo.ui.NavStyle
 import fr.yannickuhrig.vyzo.ui.common.LocalContainer
+import fr.yannickuhrig.vyzo.ui.common.Routes
 import fr.yannickuhrig.vyzo.ui.common.VyzoMark
 import fr.yannickuhrig.vyzo.ui.common.VyzoWordmark
 import fr.yannickuhrig.vyzo.ui.profile.PinDialog
@@ -113,7 +114,7 @@ fun TvMenu(args: MenuArgs) {
         .focusProperties {
             onEnter = {
                 if (requestedFocusDirection != FocusDirection.Enter) {
-                    args.requesters[args.route]?.let { runCatching { it.requestFocus() } }
+                    (args.requesters[args.route] ?: args.requesters[Routes.SETTINGS])?.let { runCatching { it.requestFocus() } }
                 }
             }
         }
@@ -289,6 +290,8 @@ private fun VaultLogo(expanded: Boolean, modifier: Modifier) {
     val shape = RoundedCornerShape(dpx(10))
     Row(
         modifier.height(dpx(52)).clip(shape)
+            // Sans code coffre-fort, le logo n'est pas interactif et ne doit jamais capter le focus par défaut.
+            .focusProperties { canFocus = pinSet }
             .onFocusChanged { focused = it.isFocused }
             .border(2.dp, if (focused) Tok.FocusFill else Color.Transparent, shape)
             .combinedClickable(

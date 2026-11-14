@@ -22,10 +22,16 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -34,7 +40,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fr.yannickuhrig.vyzo.data.db.ContentKind
+import fr.yannickuhrig.vyzo.ui.common.LocalContainer
+import fr.yannickuhrig.vyzo.ui.home.Clock
 import fr.yannickuhrig.vyzo.ui.home.VodItem
+import fr.yannickuhrig.vyzo.ui.home.WeatherChip
+import fr.yannickuhrig.vyzo.ui.home.WeatherDialog
+import fr.yannickuhrig.vyzo.ui.home.rememberWeatherState
 
 /** Voile de l'accueil : texte à gauche de l'écran, rangées en bas. */
 internal val HomeScrimX = listOf(0f to 1f, 0.24f to .94f, 0.48f to .5f, 0.72f to 0f)
@@ -114,6 +125,28 @@ internal fun MetaLine(item: VodItem) {
 }
 
 @Composable
-fun Separator() {
+internal fun Separator() {
     Box(Modifier.width(dpx(1)).height(dpx(16)).background(Color(0x66FFFFFF)))
+}
+
+/** Horloge et météo en haut à droite sur TV (non focusables à la télécommande pour garder la navigation fluide). */
+@Composable
+internal fun TvStatusCorner(modifier: Modifier = Modifier, focusableWeather: Boolean = false) {
+    val c = LocalContainer.current
+    val settings by c.settings.state.collectAsState()
+    val (weather, place) = rememberWeatherState()
+    var weatherOpen by remember { mutableStateOf(false) }
+    if (!settings.homeClock && place == null) return
+
+    Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(dpx(10))) {
+        if (settings.homeClock) Clock(tv = true)
+        place?.let {
+            WeatherChip(
+                weather,
+                it.name,
+                modifier = if (focusableWeather) Modifier else Modifier.focusProperties { canFocus = false },
+            ) { weatherOpen = true }
+        }
+    }
+    if (weatherOpen) WeatherDialog(place?.name.orEmpty(), weather) { weatherOpen = false }
 }

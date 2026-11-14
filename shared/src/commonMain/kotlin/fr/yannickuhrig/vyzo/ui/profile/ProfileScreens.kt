@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -303,7 +304,17 @@ fun WhoIsWatchingScreen(onPicked: () -> Unit, onManage: () -> Unit, onClose: (()
         }
     }
 
-    LaunchedEffect(profiles?.size) { delay(150); runCatching { firstFocus.requestFocus() } }
+    val list = profiles.orEmpty()
+    val hasDialog = pinFor != null || parentalFor != null
+    var wasDialogOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(list.isNotEmpty(), hasDialog) {
+        val closedDialog = wasDialogOpen && !hasDialog
+        wasDialogOpen = hasDialog
+        if (hasDialog || list.isEmpty()) return@LaunchedEffect
+        delay(if (closedDialog) 80 else 150)
+        runCatching { firstFocus.requestFocus() }
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -314,7 +325,6 @@ fun WhoIsWatchingScreen(onPicked: () -> Unit, onManage: () -> Unit, onClose: (()
             Spacer(Modifier.height(if (tv) 40.dp else 28.dp))
             Text("Qui regarde ?", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(if (tv) 40.dp else 28.dp))
-            val list = profiles.orEmpty()
             val avatar = if (tv) 128.dp else 88.dp
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(if (tv) 28.dp else 18.dp, Alignment.CenterHorizontally),
@@ -392,8 +402,33 @@ fun ProfilesScreen() {
     var orphan by remember { mutableStateOf<LocalProfileBackup?>(null) }
     var forget by remember { mutableStateOf<LocalProfileBackup?>(null) }
     val list = profiles.orEmpty()
+    val loaded = profiles != null
+    val rowRequesters = remember { HashMap<String, FocusRequester>() }
+    val addFocus = remember { FocusRequester() }
+    var focusedProfileId by remember { mutableStateOf<String?>(null) }
+    var initialFocused by remember { mutableStateOf(false) }
+    var wasDialogOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(backupsChanged) { backups = runCatching { c.localProfiles.backups() }.getOrDefault(emptyList()) }
+
+    val dialogOpen = menu != null || rename != null || appearanceId != null || newPin != null ||
+        delete != null || restore != null || orphan != null || forget != null || creating != 0
+
+    // Sur TV : place le focus sur la liste des profils à l'arrivée (sinon le focus part sur le logo du rail)
+    // et le remet sur le profil modifié dès qu'une fenêtre se referme.
+    LaunchedEffect(tv, loaded, dialogOpen, list.size) {
+        rowRequesters.keys.retainAll(list.mapTo(HashSet()) { it.id })
+        val returningFromDialog = wasDialogOpen && !dialogOpen
+        wasDialogOpen = dialogOpen
+        if (!tv || !loaded || dialogOpen) return@LaunchedEffect
+        if (initialFocused && !returningFromDialog) return@LaunchedEffect
+        delay(100)
+        val targetId = focusedProfileId?.takeIf { id -> list.any { it.id == id } }
+            ?: active?.id?.takeIf { id -> list.any { it.id == id } }
+            ?: list.firstOrNull()?.id
+        val target = targetId?.let { rowRequesters[it] } ?: addFocus
+        if (runCatching { target.requestFocus() }.isSuccess) initialFocused = true
+    }
 
     // Portée de l'appli : quitter l'écran ne coupe pas une sauvegarde ou une restauration en deux.
     fun saveLocal(p: ProfileEntity) {
@@ -545,7 +580,14 @@ fun ProfilesScreen() {
     ) {
         item { SectionTitle("Profils du foyer") }
         items(list, key = { it.id }) { p ->
-            Tile(onClick = { menu = p }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), focusScale = 1.01f) {
+            val req = rowRequesters.getOrPut(p.id) { FocusRequester() }
+            Tile(
+                onClick = { focusedProfileId = p.id; menu = p },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                    .focusRequester(req)
+                    .onFocusChanged { if (it.hasFocus) focusedProfileId = p.id },
+                focusScale = 1.01f,
+            ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     ProfileAvatar(p.name, p.colorIndex, 44.dp, p.isKid, avatar = p.avatar)
                     Spacer(Modifier.width(16.dp))
@@ -567,7 +609,7 @@ fun ProfilesScreen() {
             }
         }
         item {
-            Tile(onClick = { newName = ""; creating = 1 }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), focusScale = 1.01f) {
+            Tile(onClick = { newName = ""; creating = 1 }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).focusRequester(addFocus), focusScale = 1.01f) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
@@ -635,6 +677,11 @@ private fun AvatarAndColorDialog(
     onDismiss: () -> Unit,
 ) {
     val activeAvatar = ProfileManager.cleanAvatar(profile.avatar)
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(80)
+        runCatching { firstFocus.requestFocus() }
+    }
     ZapDialog(onDismiss = onDismiss) {
         Column(
             Modifier.widthIn(max = 580.dp).heightIn(max = 540.dp).verticalScroll(rememberScrollState()).padding(22.dp),
@@ -654,6 +701,7 @@ private fun AvatarAndColorDialog(
                     label = "Initiale",
                     selected = activeAvatar.isEmpty(),
                     onClick = { onAvatar("") },
+                    modifier = Modifier.focusRequester(firstFocus),
                 ) { tint ->
                     Text(initials(profile.name).take(1), color = tint, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
@@ -701,13 +749,14 @@ private fun AvatarChoiceTile(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     glyph: @Composable (Color) -> Unit,
 ) {
     Tile(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier,
+        modifier = if (selected) modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else modifier,
     ) { focused ->
         val tint = if (focused) Color.White else VyzoColors.Text
         Column(

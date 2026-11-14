@@ -4,6 +4,7 @@ import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.db.AppDatabase
 import fr.yannickuhrig.vyzo.data.db.ReminderEntity
 import fr.yannickuhrig.vyzo.data.prefs.SettingsStore
+import fr.yannickuhrig.vyzo.data.profile.ProfileManager
 import fr.yannickuhrig.vyzo.platform.Platform
 import fr.yannickuhrig.vyzo.platform.WindowControls
 import fr.yannickuhrig.vyzo.schedule.RecordingRunner
@@ -37,6 +38,10 @@ class DesktopPlatform(private val windowControls: WindowControls) : Platform {
     override val appVersion: String = BuildInfo.VERSION
     override val appVersionCode: Int = BuildInfo.VERSION_CODE
     override val deviceModel: String get() = Os.model
+    override val stableDeviceId: String by lazy {
+        val raw = Os.machineId
+        if (raw.isBlank()) "" else "pc-${ProfileManager.sha256("vyzo-desktop:$raw").take(32)}"
+    }
     override val systemVersion: String get() = Os.description
     override val filesDir: File get() = AppDirs.data
     override val cloudUrl: String = BuildInfo.SUPABASE_URL

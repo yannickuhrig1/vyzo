@@ -85,7 +85,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import fr.yannickuhrig.vyzo.ui.common.LocalContainer
 import fr.yannickuhrig.vyzo.ui.vod.VodCategoryLine
 import fr.yannickuhrig.vyzo.ui.vod.vodCategoryLines
-import fr.yannickuhrig.vyzo.ui.vod.vodSpotlightPick
+import fr.yannickuhrig.vyzo.ui.vod.vodHeroPick
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -100,8 +100,8 @@ private const val HERO_H = 276
  * Voile de l'image : le texte commence après la liste des catégories, le sombre de gauche va donc plus loin qu'à l'accueil ;
  * la grille commence plus haut, l'image s'efface donc plus tôt en bas.
  */
-private val BrowseScrimX = listOf(0f to 1f, 0.36f to .94f, 0.6f to .6f, 0.86f to 0f)
-private val BrowseScrimY = listOf(0f to .45f, 0.14f to 0f, 0.28f to 0f, 0.44f to .85f, 0.6f to 1f)
+internal val BrowseScrimX = listOf(0f to 1f, 0.36f to .94f, 0.6f to .6f, 0.86f to 0f)
+internal val BrowseScrimY = listOf(0f to .45f, 0.14f to 0f, 0.28f to 0f, 0.44f to .85f, 0.6f to 1f)
 
 internal val RATING_LABELS = listOf("Toutes les notes", "5 et plus", "6 et plus", "7 et plus", "8 et plus", "9 et plus")
 internal val RATING_VALUES = listOf(0f, 5f, 6f, 7f, 8f, 9f)
@@ -130,10 +130,7 @@ private fun VodCard.toVodItem(kind: ContentKind) = VodItem(kind, uid, title, pos
  * la liste n'a ni image de fond ni résumé (cas des films Xtream, complétés seulement à l'ouverture de leur fiche).
  * D'abord le choix du bandeau, sinon le mieux noté qui a une affiche, sinon le premier titre.
  */
-internal fun tvHeroPick(items: List<VodCard>, selected: String?): VodCard? =
-    vodSpotlightPick(items, selected)
-        ?: items.filter { it.poster.isNotBlank() && it.rating <= 10f }.maxByOrNull { it.rating }
-        ?: items.firstOrNull()
+internal fun tvHeroPick(items: List<VodCard>, selected: String?): VodCard? = vodHeroPick(items, selected)
 
 /** Films ou séries : catégories à gauche, filtres et affiches à droite. */
 @Composable
@@ -209,7 +206,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     val heroOn = spotlightOn && list0 != null && pick != null
     var spot by remember { mutableStateOf<VodItem?>(null) }
     LaunchedEffect(heroOn, focusedIndex, list0, pick) {
-        if (!heroOn || list0 == null) {
+        if (!spotlightOn || list0 == null || pick == null) {
             spot = null
             return@LaunchedEffect
         }
@@ -254,17 +251,22 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                 }
             }
             val count = shown?.let { if (it.size == 1) "1 titre" else "${it.size} titres" }
-            if (hero != null) {
-                // Hauteur fixe : la grille ne saute pas d'un titre à l'autre.
-                Box(Modifier.fillMaxWidth().height(dpx(HERO_H)), contentAlignment = Alignment.TopStart) {
-                    SectionInfo(hero, kicker = listOfNotNull(title, count).joinToString(" · ").uppercase(), titleScale = 0.8f, maxWidth = 860)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(dpx(18))) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.TopStart) {
+                    if (hero != null) {
+                        // Hauteur fixe : la grille ne saute pas d'un titre à l'autre.
+                        Box(Modifier.fillMaxWidth().height(dpx(HERO_H)), contentAlignment = Alignment.TopStart) {
+                            SectionInfo(hero, kicker = listOfNotNull(title, count).joinToString(" · ").uppercase(), titleScale = 0.8f, maxWidth = 860)
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth().padding(top = dpx(8)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
+                            Text(title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            count?.let { Text(it, color = Tok.TextLow, fontSize = spx(17), maxLines = 1, modifier = Modifier.weight(1f)) }
+                            counter()
+                        }
+                    }
                 }
-            } else {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dpx(14))) {
-                    Text(title, color = Color.White, fontSize = spx(34), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    count?.let { Text(it, color = Tok.TextLow, fontSize = spx(17), maxLines = 1, modifier = Modifier.weight(1f)) }
-                    counter()
-                }
+                TvStatusCorner()
             }
             if (!items.isNullOrEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(top = dpx(14)), horizontalArrangement = Arrangement.spacedBy(dpx(10)), verticalAlignment = Alignment.CenterVertically) {
@@ -329,7 +331,7 @@ private fun emptyTitle(selected: String?) = when (selected) {
 
 /** Titre d'une rubrique de la liste des catégories : « BIBLIOTHÈQUE », « GENRES », « CATÉGORIES ». */
 @Composable
-private fun SectionHeader(text: String, first: Boolean) {
+internal fun SectionHeader(text: String, first: Boolean) {
     Text(
         text.uppercase(), color = Tok.TextLow.copy(alpha = 0.8f), fontSize = spx(14), fontWeight = FontWeight.Bold, letterSpacing = spx(2.2),
         maxLines = 1, modifier = Modifier.padding(start = dpx(18), top = dpx(if (first) 2 else 22), bottom = dpx(8)),

@@ -43,6 +43,8 @@ fun testContainer(
             if (fakeCloudUrl == null) real else object : Platform by real {
                 override val cloudUrl: String = fakeCloudUrl
                 override val cloudKey: String = "cle-test"
+                // Garde plusieurs faux appareils distincts sur la même machine de test, sauf surcharge explicite.
+                override val stableDeviceId: String = ""
             }
         }.let(decorate),
         scope = scope,

@@ -25,12 +25,17 @@ class FakeSupabase : Dispatcher() {
 
     /** Réinitialisation du mot de passe par e-mail. */
     fun setPassword(email: String, password: String) = synchronized(this) { users[email] = users.getValue(email).first to password }
+
+    /** Révocation de toutes les sessions existantes (« déconnecter les autres appareils » ou changement de mot de passe). */
+    @Volatile var revokedUsers: Set<String> = emptySet()
+
     private val keys = mapOf(
         "profiles" to listOf("user_id", "id"),
         "watch_progress" to listOf("user_id", "profile_id", "content_key"),
         "user_lists" to listOf("user_id", "profile_id", "id"),
         "list_items" to listOf("user_id", "profile_id", "list_id", "content_key"),
         "recordings" to listOf("user_id", "id"),
+        "devices" to listOf("user_id", "id"),
         "sealed_items" to listOf("user_id", "kind", "id"),
     )
     val tables = HashMap<String, LinkedHashMap<List<String>, JsonObject>>()
@@ -79,6 +84,7 @@ class FakeSupabase : Dispatcher() {
             }
             "refresh_token" -> {
                 val uid = o["refresh_token"]!!.jsonPrimitive.content.removePrefix("ref-")
+                if (uid in revokedUsers) return json(400, """{"error_code":"refresh_token_not_found","msg":"Invalid Refresh Token"}""")
                 uid to users.entries.first { it.value.first == uid }.key
             }
             else -> return json(400, "{}")
