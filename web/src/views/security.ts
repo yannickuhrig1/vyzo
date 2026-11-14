@@ -95,7 +95,7 @@ export function securityView() {
       type: 'button', role: 'radio', 'data-theme-choice': t.id, 'aria-checked': String(t.id === current_), title: t.hint,
       onclick: () => setTheme(t.id),
     }, t.label)))
-  const affichage = panel('Affichage', 'Sobre, Cinéma, Clair, Nuit TV, OLED ou Sable. Le choix reste sur cet ordinateur.', [themes])
+  const affichage = panel('Affichage', 'Douze thèmes (6 sombres, 6 clairs) : Sobre, Cinéma, Nuit TV, OLED, Forêt, Régie, Velours, Clair, Sable, Polaire, Sauge ou Gazette. Le choix reste sur cet ordinateur.', [themes])
 
   // Sauvegarde
   const open = state.vault === 'open'
