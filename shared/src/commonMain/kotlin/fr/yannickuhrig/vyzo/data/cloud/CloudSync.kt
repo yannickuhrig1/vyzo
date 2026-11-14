@@ -33,6 +33,7 @@ import fr.yannickuhrig.vyzo.util.int
 import fr.yannickuhrig.vyzo.util.long
 import fr.yannickuhrig.vyzo.util.str
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,6 +48,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -335,15 +337,19 @@ class CloudSync(
 
     // ------------------------------------------------------------------ Compte
 
-    suspend fun signIn(email: String, password: String) {
+    // Connexion, clé et synchro tournent hors du fil de l'interface : appelées depuis un bouton, elles le gelaient (Vyzo PC
+    // restait figé sur le formulaire de connexion pendant toute la première synchro, déjà connecté mais sans le montrer).
+    private suspend fun <T> offUi(block: suspend () -> T): T = withContext(Dispatchers.Default) { block() }
+
+    suspend fun signIn(email: String, password: String): Unit = offUi {
         val s = api.signIn(email, password)
         onSignedIn(s, password)
     }
 
-    suspend fun signUp(email: String, password: String): SignUpResult {
+    suspend fun signUp(email: String, password: String): SignUpResult = offUi {
         val r = api.signUp(email, password)
         if (r is SignUpResult.SignedIn) onSignedIn(r.session, password)
-        return r
+        r
     }
 
     suspend fun resendConfirmation(email: String) = api.resendConfirmation(email)
@@ -354,7 +360,7 @@ class CloudSync(
      * Appareil déjà connecté au compte, sans la clé : le mot de passe la lui donne. Le reste de la synchro ne repart pas de
      * zéro. Ce qui a été reçu sans la clé n'a pas été appliqué : on le reprend, sans rien supprimer ici.
      */
-    suspend fun unlockVault(password: String) {
+    suspend fun unlockVault(password: String): Unit = offUi {
         val email = store.get().session?.email ?: throw CloudException("Pas de compte Vyzo connecté")
         val s = api.signIn(email, password)
         store.update { it.copy(session = s, sealedKnown = emptyMap(), cursors = it.cursors - T_SEALED) }
@@ -369,7 +375,7 @@ class CloudSync(
      * Clé illisible après « Mot de passe oublié » : l'ancien mot de passe l'ouvre, et elle passe au nouveau pour tous les
      * appareils et le site. Le mot de passe actuel est vérifié d'abord.
      */
-    suspend fun recoverVault(password: String, oldPassword: String) {
+    suspend fun recoverVault(password: String, oldPassword: String): Unit = offUi {
         val email = store.get().session?.email ?: throw CloudException("Pas de compte Vyzo connecté")
         val s = api.signIn(email, password)
         store.update { it.copy(session = s, sealedKnown = emptyMap(), cursors = it.cursors - T_SEALED) }
@@ -384,7 +390,7 @@ class CloudSync(
      * Clé perdue après une réinitialisation du mot de passe : cet appareil repart avec une nouvelle clé et renvoie ses
      * playlists, son guide, ses réglages et ses chaînes. Le mot de passe est vérifié d'abord.
      */
-    suspend fun resetVault(password: String) {
+    suspend fun resetVault(password: String): Unit = offUi {
         val email = store.get().session?.email ?: throw CloudException("Pas de compte Vyzo connecté")
         val s = api.signIn(email, password)
         store.update { it.copy(session = s) }
@@ -442,7 +448,7 @@ class CloudSync(
         platform?.toast(msg, long = true)
     }
 
-    suspend fun signOut() {
+    suspend fun signOut(): Unit = offUi {
         realtime?.stop()
         val s = store.get().session
         mutex.withLock {
@@ -568,7 +574,9 @@ class CloudSync(
     // ------------------------------------------------------------------ Synchro
 
     /** Synchronise maintenant. [pull] = false : envoi seulement (après une modification locale). */
-    suspend fun sync(pull: Boolean = true): Result<Unit> = mutex.withLock {
+    suspend fun sync(pull: Boolean = true): Result<Unit> = offUi { syncLocked(pull) }
+
+    private suspend fun syncLocked(pull: Boolean): Result<Unit> = mutex.withLock {
         val data = store.get()
         val session = data.session ?: return@withLock Result.failure(CloudException("Pas de compte Vyzo connecté"))
         _status.value = _status.value.copy(running = true, error = null)

@@ -77,6 +77,7 @@ import java.io.PrintStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.floor
 import kotlin.system.exitProcess
 
 /** Fenêtre principale vue du code commun : plein écran et mini-lecteur. */
@@ -145,7 +146,7 @@ private fun setupLogging() {
     val file = AppDirs.logs.resolve("vyzo.log")
     // On repart d'un fichier vide quand il devient gros.
     if (file.length() > 2_000_000) file.renameTo(AppDirs.logs.resolve("vyzo.old.log"))
-    val out = runCatching { PrintStream(file.outputStream().let { java.io.FileOutputStream(file, true) }, true, "UTF-8") }.getOrNull()
+    val out = runCatching { PrintStream(java.io.FileOutputStream(file, true), true, "UTF-8") }.getOrNull()
     val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.FRANCE)
     Log.sink = { level, tag, msg, t ->
         val line = "${fmt.format(Date())} ${level.name.first()}/$tag: $msg"
@@ -167,9 +168,31 @@ private fun setupLogging() {
  */
 fun loadSqliteBeforeCompose() = BundledSQLiteDriver().open(":memory:").close()
 
+/**
+ * Échelle de l'écran sous Linux, à régler avant le démarrage d'AWT. Java ne lit que GDK_SCALE et le réglage
+ * « scaling-factor » de GNOME : sous Cinnamon (laissé sur « auto »), il voit 1 sur un écran HiDPI et toute
+ * l'interface devient minuscule. On prend alors Xft.dpi (192 = ×2), que Cinnamon, GNOME, KDE et XFCE règlent.
+ * Java n'accepte qu'une échelle entière sous Linux : 1,75 donne 2, 1,5 reste à 1.
+ */
+private fun applyLinuxScale(): String? {
+    if (!Os.isLinux || System.getProperty("sun.java2d.uiScale") != null) return null
+    if (listOf("J2D_UISCALE", "GDK_SCALE").any { !System.getenv(it).isNullOrBlank() }) return null
+    val gnome = Os.run("gsettings", "get", "org.gnome.desktop.interface", "scaling-factor")
+        ?.substringAfterLast(' ')?.toIntOrNull() ?: 0
+    if (gnome > 0) return null
+    val dpi = Os.run("xrdb", "-query")?.lineSequence()
+        ?.firstOrNull { it.startsWith("Xft.dpi:") }?.substringAfter(':')?.trim()?.toDoubleOrNull() ?: return null
+    val scale = floor(dpi / 96.0 + 0.25).toInt().coerceIn(1, 4)
+    if (scale <= 1) return null
+    System.setProperty("sun.java2d.uiScale", scale.toString())
+    return "×$scale (Xft.dpi $dpi)"
+}
+
 fun main(args: Array<String>) {
     val startMinimized = "--minimized" in args
+    val linuxScale = applyLinuxScale()
     setupLogging()
+    linuxScale?.let { Log.i("Vyzo", "échelle de l'écran : $it") }
     Log.i("Vyzo", "Vyzo PC ${BuildInfo.VERSION} – ${System.getProperty("os.name")} ${System.getProperty("os.version")}, Java ${System.getProperty("java.version")}")
 
     val controller = MainWindowController()

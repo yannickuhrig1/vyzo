@@ -116,6 +116,48 @@ class DesktopCloudSyncTest {
         assertFalse(pc.c.repo.isFavorite("$pp:L:101").first())
     }
 
+    /**
+     * « Se connecter » appelle signIn depuis le fil de l'interface (Swing). Toute la première synchro tournait alors dessus :
+     * l'écran restait figé sur le formulaire de connexion jusqu'à la fin, et il fallait relancer Vyzo PC.
+     */
+    @Test
+    fun connexionDepuisLInterfaceNeGelePasLEcran() = runBlocking {
+        val dir = Files.createTempDirectory("vyzo-cloud-edt").toFile()
+        val c = testContainer(dir)
+        val surLeFilDeLEcran = java.util.concurrent.atomic.AtomicBoolean(false)
+        val platform = object : Platform by c.platform {
+            // Lu par la synchro (signalement de l'appareil) : note le fil sur lequel elle tourne.
+            override val deviceName: String get() {
+                if (javax.swing.SwingUtilities.isEventDispatchThread()) surLeFilDeLEcran.set(true)
+                return "PC de test"
+            }
+        }
+        val cloud = CloudSync(
+            CloudApi(supa.url("/").toString().trimEnd('/'), "cle-test", OkHttpClient()),
+            CloudStore(dir.resolve("cloud-test.preferences_pb")), c.db, c.repo, c.profiles, c.settings, c.scope,
+            platform = platform,
+        )
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { cloud.signIn("foyer@example.fr", "motdepasse") }
+        assertTrue(cloud.status.value.signedIn)
+        assertTrue(fake.rows("devices").isNotEmpty())
+        assertFalse("la synchro a tourné sur le fil de l'interface", surLeFilDeLEcran.get())
+    }
+
+    /** Vyzo PC neuf : en se connectant au compte, la playlist de la TV arrive et ses chaînes se chargent sans relancer. */
+    @Test
+    fun playlistArriveeParLeCompteSeChargeSansRelancer() = runBlocking {
+        val tv = Device()
+        tv.addXtream("Abonnement")
+        tv.cloud.signIn("foyer@example.fr", "motdepasse")
+
+        val pc = Device()
+        assertTrue(pc.c.db.playlists().all().isEmpty())
+        pc.cloud.signIn("foyer@example.fr", "motdepasse")
+        val p = pc.c.db.playlists().all().single()
+        waitUntil("chaînes de la playlist arrivée chargées") { pc.c.db.channels().count(p.id) > 0 }
+        waitUntil("mise à jour complète notée") { pc.c.settings.get().lastFullSync > 0 }
+    }
+
     private suspend fun waitUntil(what: String, cond: suspend () -> Boolean) {
         val end = System.currentTimeMillis() + 5_000
         while (!cond()) {

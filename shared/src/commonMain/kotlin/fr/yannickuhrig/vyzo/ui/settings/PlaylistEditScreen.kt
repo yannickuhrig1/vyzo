@@ -229,6 +229,15 @@ fun PlaylistEditScreen(playlistId: Long, firstRun: Boolean, onDone: () -> Unit) 
         )
     }
 
+    // Premier lancement : dès que le compte Vyzo a ramené des playlists, l'assistant laisse place à l'appli
+    // (leur chargement est lancé par la synchro du compte). Pas pendant un ajout à la main.
+    if (firstRun) {
+        val playlists by c.repo.playlists.collectAsState(initial = null)
+        LaunchedEffect(playlists, cloud.signedIn, state) {
+            if (cloud.signedIn && state == SaveState.Idle && !playlists.isNullOrEmpty()) onDone()
+        }
+    }
+
     if (!loaded) return
 
     if (showAccount) {
