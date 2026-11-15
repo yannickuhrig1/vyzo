@@ -1,0 +1,69 @@
+# Tests automatiques : appli Android (TV et mobile) et Vyzo PC.
+# Se lance à chaque push sur une branche, sur les pull requests, à la main (onglet Actions),
+# et avant chaque release : « Vyzo PC » l'appelle et ne publie rien si un test échoue.
+# Les deux jobs tournent séparément : un même appel Gradle pour :app et :desktop casse la génération KSP de Room.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore: ["web/**", "release-notes/**", "**.md", ".github/workflows/site.yml"]
+  pull_request:
+    paths-ignore: ["web/**", "release-notes/**", "**.md", ".github/workflows/site.yml"]
+  workflow_dispatch:
+  workflow_call:
+
+# Actions épinglées par empreinte de commit (version en commentaire), comme pour le site.
+permissions:
+  contents: read
+
+# Un nouveau push sur la même branche annule les tests encore en cours de l'ancien.
+# Appelé par « Vyzo PC », github.workflow vaut « Vyzo PC » et github.ref le tag : groupe à part, rien n'est annulé.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android (TV et mobile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+      # Parseurs, synchro de bout en bout, compte, migrations Room, navigation TV, captures d'écran (Robolectric).
+      # LiveSupabaseTest est sauté sans VYZO_LIVE_EMAIL / VYZO_LIVE_PASSWORD.
+      - name: Tests Android
+        run: ./gradlew :app:testTvDebugUnitTest :app:testMobileDebugUnitTest --continue --no-daemon
+      - name: Rapport des tests
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rapport-tests-android
+          path: app/build/reports/tests/
+          retention-days: 7
+
+  desktop:
+    name: Vyzo PC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+      - name: Tests PC (parseurs, synchro, compte, mises à jour)
+        run: ./gradlew :desktop:test --no-daemon
+      - name: Rapport des tests
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rapport-tests-pc
+          path: desktop/build/reports/tests/
+          retention-days: 7

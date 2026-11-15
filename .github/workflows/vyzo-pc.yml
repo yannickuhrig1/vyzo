@@ -4,6 +4,7 @@
 # Chaque fichier porte le nom de sa plateforme : Vyzo-X.Y.Z-Windows.msi, -Linux.deb, -macOS-Apple-Silicon.dmg,
 # -Android-TV.apk, -Android-mobile.apk (« -tv » et « -mobile » restent : l'appli cherche son APK par ces mots). Les APK TV et mobile, signés sur le PC qui a la clé, partent par scripts/publier-mise-a-jour.sh.
 # Les fichiers vont directement dans la release (pas d'artefacts : le stockage des artefacts d'un dépôt privé est limité).
+# Rien n'est publié si un test échoue : le workflow « Tests » (Android TV, mobile et PC) passe en premier.
 name: Vyzo PC
 
 on:
@@ -15,7 +16,11 @@ permissions:
   contents: write
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   release:
+    needs: tests
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -53,8 +58,6 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Tests (parseurs, synchro, compte, mises à jour)
-        run: ./gradlew :desktop:test --no-daemon
       - name: Paquet .deb
         run: ./gradlew :desktop:packageReleaseDeb --no-daemon
       - name: Dépendance à VLC
