@@ -44,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -53,6 +54,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,6 +88,7 @@ import fr.yannickuhrig.vyzo.ui.common.LocalContainer
 import fr.yannickuhrig.vyzo.ui.vod.VodCategoryLine
 import fr.yannickuhrig.vyzo.ui.vod.vodCategoryLines
 import fr.yannickuhrig.vyzo.ui.vod.vodHeroPick
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -162,9 +165,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     }
 
     // Passer sur une catégorie l'ouvre après un court arrêt : descendre la liste ne charge pas chaque catégorie.
-    var focusedCat by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(focusedCat) {
-        val key = focusedCat ?: return@LaunchedEffect
+    var focusedCat by rememberSettledFocus<String> { key ->
         delay(300)
         vm.select(key)
     }
@@ -186,11 +187,12 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     val listKey = "$selected|$sort|$ratingIndex|$period"
     // Mémorisé : au retour d'une fiche, la grille reste où elle était.
     var scrolledFor by rememberSaveable { mutableStateOf(listKey) }
-    var focusedIndex by remember { mutableIntStateOf(-1) }
+    // Lu seulement par le compteur et le titre mis en avant : parcourir la grille ne recompose pas tout l'écran.
+    val focusedIndex = remember { mutableIntStateOf(-1) }
     LaunchedEffect(listKey) {
         if (scrolledFor != listKey) {
             scrolledFor = listKey
-            focusedIndex = -1
+            focusedIndex.intValue = -1
             grid.scrollToItem(0)
         }
     }
@@ -205,14 +207,16 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
     // Seule une catégorie vide garde l'en-tête simple : un titre sans image de fond prend son affiche.
     val heroOn = spotlightOn && list0 != null && pick != null
     var spot by remember { mutableStateOf<VodItem?>(null) }
-    LaunchedEffect(heroOn, focusedIndex, list0, pick) {
+    LaunchedEffect(heroOn, list0, pick) {
         if (!spotlightOn || list0 == null || pick == null) {
             spot = null
             return@LaunchedEffect
         }
-        val target = (list0.getOrNull(focusedIndex) ?: pick)?.toVodItem(kind)
-        if (spot != null && target != spot) delay(300)
-        spot = target
+        snapshotFlow { focusedIndex.intValue }.collectLatest { index ->
+            val target = (list0.getOrNull(index) ?: pick).toVodItem(kind)
+            if (spot != null && target != spot) delay(300)
+            spot = target
+        }
     }
     val hero = spot.takeIf { heroOn }
 
@@ -242,14 +246,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(start = dpx(28), end = dpx(36))) {
-            val counter: @Composable () -> Unit = {
-                if (!shown.isNullOrEmpty() && focusedIndex >= 0) {
-                    Text(
-                        "${minOf(focusedIndex + 1, shown.size)} / ${shown.size}", color = Color.White, fontSize = spx(15), fontWeight = FontWeight.Bold, maxLines = 1,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Surf2).padding(horizontal = dpx(14), vertical = dpx(5)),
-                    )
-                }
-            }
+            val counter: @Composable () -> Unit = { FocusCounter(focusedIndex, shown?.size ?: 0) }
             val count = shown?.let { if (it.size == 1) "1 titre" else "${it.size} titres" }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(dpx(18))) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.TopStart) {
@@ -304,7 +301,7 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
                     ) {
                         itemsIndexed(list, key = { _, it -> it.uid }) { index, card ->
                             val item = remember(card) { card.toVodItem(kind) }
-                            TitledPoster(item, Modifier.fillMaxWidth(), onFocus = { focusedIndex = index }, onClick = {
+                            TitledPoster(item, Modifier.fillMaxWidth(), onFocus = { focusedIndex.intValue = index }, onClick = {
                                 LastFocus.pending = item.key
                                 onOpen(card.uid)
                             })
@@ -319,6 +316,18 @@ fun TvBrowse(kind: ContentKind, onOpen: (String) -> Unit) {
             }
         }
     }
+    }
+}
+
+/** « 12 / 250 » : position de l'affiche sélectionnée. Seul ce compteur se recompose quand la sélection bouge. */
+@Composable
+private fun FocusCounter(index: IntState, size: Int) {
+    val i = index.intValue
+    if (size > 0 && i >= 0) {
+        Text(
+            "${minOf(i + 1, size)} / $size", color = Color.White, fontSize = spx(15), fontWeight = FontWeight.Bold, maxLines = 1,
+            modifier = Modifier.clip(RoundedCornerShape(50)).background(Surf2).padding(horizontal = dpx(14), vertical = dpx(5)),
+        )
     }
 }
 

@@ -113,17 +113,13 @@ fun TvLive(onOpenPlayer: (ChannelEntity, String) -> Unit) {
     }
 
     // Parcourir les groupes change la liste après un court arrêt, jamais à chaque ligne survolée.
-    var focusedGroup by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(focusedGroup) {
-        val g = focusedGroup ?: return@LaunchedEffect
+    var focusedGroup by rememberSettledFocus<String> { g ->
         delay(280)
         vm.selectGroup(g)
     }
 
     // Même chose pour l'arrière-plan et le programme : pas de chargement à chaque chaîne survolée.
-    var focusTarget by remember { mutableStateOf<ChannelEntity?>(null) }
-    LaunchedEffect(focusTarget) {
-        val ch = focusTarget ?: return@LaunchedEffect
+    var focusTarget by rememberSettledFocus<ChannelEntity> { ch ->
         if (vm.focused.value != null) delay(300)
         vm.focused.value = ch
     }
@@ -142,7 +138,7 @@ fun TvLive(onOpenPlayer: (ChannelEntity, String) -> Unit) {
     val channelState = rememberLazyListState()
     val groupFocus = remember { FocusRequester() }
     val channelFocus = remember { FocusRequester() }
-    val target = channels?.indexOfFirst { it.uid == playing }?.takeIf { it >= 0 } ?: 0
+    val target = remember(channels, playing) { channels?.indexOfFirst { it.uid == playing }?.takeIf { it >= 0 } ?: 0 }
     var arrived by remember { mutableStateOf(false) }
     LaunchedEffect(channels?.isEmpty(), groups.isEmpty()) {
         val list = channels ?: return@LaunchedEffect

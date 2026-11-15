@@ -109,13 +109,14 @@ object LastFocus {
 
 @Composable
 fun Modifier.restoreFocus(key: String): Modifier {
+    // Décidé à l'arrivée de la carte : les autres (presque toutes) ne lancent ni coroutine ni demande de focus en défilant.
+    val wanted = remember(key) { LastFocus.pending == key }
+    if (!wanted) return this
     val fr = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        if (LastFocus.pending == key) {
-            delay(150)
-            runCatching { fr.requestFocus() }
-            LastFocus.pending = null
-        }
+        delay(150)
+        runCatching { fr.requestFocus() }
+        if (LastFocus.pending == key) LastFocus.pending = null
     }
     return this.focusRequester(fr)
 }

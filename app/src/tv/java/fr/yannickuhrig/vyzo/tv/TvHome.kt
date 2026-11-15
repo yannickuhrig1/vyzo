@@ -38,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -224,7 +225,8 @@ private fun TvRow(
 ) {
     val g = LocalCardGrid.current
     val state = rememberLazyListState()
-    var cur by remember { mutableIntStateOf(-1) }
+    // Lu seulement par le suivi du centrage : passer d'une carte à l'autre ne recompose pas la rangée.
+    val cur = remember { mutableIntStateOf(-1) }
     CenterFollow(state, cur)
     val landscape = row.id == HomeRows.CONTINUE_MOVIES || row.id == HomeRows.CONTINUE_SERIES
     val wide = row.items.firstOrNull() !is VodItem || landscape
@@ -243,7 +245,7 @@ private fun TvRow(
                     itemsIndexed(row.items, key = { _, it -> it.key }) { i, item ->
                         // Toujours le même enchaînement : si une rangée s'insère au-dessus, la carte active garde le focus.
                         val own = remember { FocusRequester() }
-                        val track = Modifier.onFocusChanged { if (it.hasFocus) cur = i }
+                        val track = Modifier.onFocusChanged { if (it.hasFocus) cur.intValue = i }
                             .restoreFocus(item.key)
                             .focusRequester(if (i == 0 && firstCard != null) firstCard else own)
                         val focus = { onFocus(item) }
@@ -264,14 +266,16 @@ private fun TvRow(
 
 /** Garde la carte sélectionnée au milieu de l'écran. Aux extrémités de la rangée, elle va naturellement jusqu'au bord. */
 @Composable
-private fun CenterFollow(state: LazyListState, cur: Int) {
-    LaunchedEffect(cur) {
-        if (cur < 0) return@LaunchedEffect
-        snapshotFlow {
-            val info = state.layoutInfo
-            info.visibleItemsInfo.firstOrNull { x -> x.index == cur }?.let { x -> x.offset + x.size / 2f - info.viewportSize.width / 2f }
-        }.collectLatest { d ->
-            if (d != null && abs(d) > 1.5f) state.scrollBy(d * 0.4f)
+private fun CenterFollow(state: LazyListState, cur: IntState) {
+    LaunchedEffect(state, cur) {
+        snapshotFlow { cur.intValue }.collectLatest { index ->
+            if (index < 0) return@collectLatest
+            snapshotFlow {
+                val info = state.layoutInfo
+                info.visibleItemsInfo.firstOrNull { x -> x.index == index }?.let { x -> x.offset + x.size / 2f - info.viewportSize.width / 2f }
+            }.collectLatest { d ->
+                if (d != null && abs(d) > 1.5f) state.scrollBy(d * 0.4f)
+            }
         }
     }
 }

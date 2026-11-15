@@ -101,6 +101,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -181,8 +182,10 @@ import fr.yannickuhrig.vyzo.ui.theme.VyzoColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val resizeModes = ResizeMode.entries
 
@@ -400,7 +403,14 @@ fun PlayerScreen(
             position = player.currentPosition.coerceAtLeast(0)
             duration = player.duration.coerceAtLeast(0)
             clock = System.currentTimeMillis()
-            delay(if (externalSubtitles.isNotEmpty()) 100L else 250L)
+            when {
+                externalSubtitles.isNotEmpty() -> delay(100L)
+                overlay || pendingSeek != null -> delay(250L)
+                // Bandeau caché : seuls l'horloge, « Passer l'intro » et le générique suivent la position, à la seconde près.
+                // Le lecteur ne se recompose plus quatre fois par seconde pendant tout le film ; il repart aussitôt
+                // quand le bandeau s'ouvre, pour afficher la bonne position.
+                else -> withTimeoutOrNull(1_000L) { snapshotFlow { overlay || pendingSeek != null }.first { it } }
+            }
         }
     }
     LaunchedEffect(Unit) {

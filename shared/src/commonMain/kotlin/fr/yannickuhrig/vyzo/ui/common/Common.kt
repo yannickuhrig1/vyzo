@@ -115,19 +115,23 @@ fun Tile(
     // Sur PC, un clic donne aussi le focus (comme sur la télécommande) pour que l'aperçu suive la souris.
     val focusRequester = remember { FocusRequester() }
     val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
+    // Survol et agrandissement n'existent qu'à la souris et à la télécommande : au tactile, chaque ligne d'une longue
+    // liste n'a ni coroutine de survol ni animation à créer en défilant.
+    val hovered = if (desktop) interaction.collectIsHoveredAsState().value else false
     if (desktop && onHover != null) {
         LaunchedEffect(hovered) { if (hovered) onHover() }
     }
     val lifted = desktop && hoverScale > 1f && hovered
-    val scale by animateFloatAsState(
-        when {
-            focused && tv -> focusScale
-            lifted -> hoverScale
-            else -> 1f
-        },
-        label = "tileScale",
-    )
+    val scale = if (tv || desktop) {
+        animateFloatAsState(
+            when {
+                focused && tv -> focusScale
+                lifted -> hoverScale
+                else -> 1f
+            },
+            label = "tileScale",
+        )
+    } else null
     val bg = when {
         focused || lifted -> focusedColor
         selected -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -136,7 +140,7 @@ fun Tile(
     Box(
         modifier
             .zIndex(if (lifted) 1f else 0f)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .then(if (scale != null) Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value } else Modifier)
             .then(if (lifted) Modifier.shadow(16.dp, shape, clip = false) else Modifier)
             .clip(shape)
             .background(bg)

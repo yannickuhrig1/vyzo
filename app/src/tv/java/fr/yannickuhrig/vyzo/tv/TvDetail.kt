@@ -56,6 +56,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -140,13 +141,15 @@ private val DetailScrimY = listOf(0f to .5f, 0.2f to 0f, 0.55f to .78f, 0.8f to 
 @Composable
 internal fun DetailPage(backdrop: String, list: LazyListState, content: LazyListScope.() -> Unit) {
     val scrolled by remember(list) { derivedStateOf { list.firstVisibleItemIndex > 0 } }
+    // Lu au dessin seulement : le fondu n'entraîne pas une recomposition de la fiche à chaque image.
     val dim by animateFloatAsState(if (scrolled) 0.86f else 0f, label = "detaildim")
+    val bg = Bg
     Box(Modifier.fillMaxSize().background(Bg)) {
         if (backdrop.isNotBlank()) {
             AsyncImage(cardBackdrop(backdrop), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopEnd)
         }
         BakedScrim(DetailScrimX, DetailScrimY, Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Bg.copy(alpha = dim)))
+        Box(Modifier.fillMaxSize().drawBehind { if (dim > 0f) drawRect(bg.copy(alpha = dim)) })
         LazyColumn(
             Modifier.fillMaxSize(), state = list,
             contentPadding = PaddingValues(horizontal = 36.dp, vertical = DetailVerticalPad),
@@ -154,7 +157,7 @@ internal fun DetailPage(backdrop: String, list: LazyListState, content: LazyList
             content = content,
         )
         // Le bas des boutons du haut de fiche resterait visible dans la marge, au-dessus du panneau.
-        Box(Modifier.fillMaxWidth().height(DetailVerticalPad).background(Bg.copy(alpha = dim / 0.86f)))
+        Box(Modifier.fillMaxWidth().height(DetailVerticalPad).drawBehind { if (dim > 0f) drawRect(bg.copy(alpha = dim / 0.86f)) })
     }
 }
 
