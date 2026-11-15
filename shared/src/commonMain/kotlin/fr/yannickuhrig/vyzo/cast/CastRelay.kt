@@ -123,16 +123,16 @@ class CastRelay(
                 val input = BufferedInputStream(s.getInputStream())
                 val out = BufferedOutputStream(s.getOutputStream(), BUFFER)
                 var bytes = 0
-                val requestLine = readLine(input) ?: return
+                val requestLine = readLine(input, deadline) ?: return
                 bytes += requestLine.length
                 // Seul « Range » sert ; lignes, octets et durée sont bornés.
                 var range: String? = null
                 var count = 0
                 while (true) {
-                    val line = readLine(input) ?: break
+                    val line = readLine(input, deadline) ?: break
                     if (line.isEmpty()) break
                     bytes += line.length
-                    if (++count > MAX_HEADER_LINES || bytes > MAX_HEADER_BYTES || System.currentTimeMillis() > deadline) {
+                    if (++count > MAX_HEADER_LINES || bytes > MAX_HEADER_BYTES) {
                         writeHead(out, 431, listOf("Content-Length" to "0"))
                         out.flush()
                         return
@@ -289,9 +289,11 @@ class CastRelay(
             return out.toByteArray()
         }
 
-        private fun readLine(input: InputStream): String? {
+        /** Une ligne d'en-tête ; [deadline] (heure limite) est vérifiée à chaque octet, pas seulement entre deux lignes. */
+        private fun readLine(input: InputStream, deadline: Long): String? {
             val sb = StringBuilder()
             while (true) {
+                if (System.currentTimeMillis() > deadline) throw IOException("requête trop lente")
                 val b = input.read()
                 if (b < 0) return if (sb.isEmpty()) null else sb.toString()
                 if (b == '\n'.code) return sb.toString().trimEnd('\r')
