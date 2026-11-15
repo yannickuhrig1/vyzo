@@ -21,7 +21,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.SecureRandom
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Relais du Cast : le Chromecast lit le flux à travers le téléphone.
@@ -91,7 +93,10 @@ class CastRelay(
     private fun ensureStarted(): ServerSocket {
         server?.takeIf { !it.isClosed }?.let { return it }
         val ss = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(0)) }
-        val executor = Executors.newCachedThreadPool { r -> Thread(r, "cast-relay").apply { isDaemon = true } }
+        // Nombre de connexions servies en même temps borné : au-delà, la connexion est fermée tout de suite.
+        val executor = ThreadPoolExecutor(
+            0, MAX_CONNECTIONS, 30, TimeUnit.SECONDS, SynchronousQueue(),
+        ) { r -> Thread(r, "cast-relay").apply { isDaemon = true } }
         server = ss
         pool = executor
         executor.execute {
@@ -115,12 +120,19 @@ class CastRelay(
                 val input = BufferedInputStream(s.getInputStream())
                 val out = BufferedOutputStream(s.getOutputStream(), BUFFER)
                 val requestLine = readLine(input) ?: return
-                val headers = HashMap<String, String>()
+                // Seul « Range » sert ; le nombre de lignes est borné (un appareil du Wi-Fi ne peut pas occuper le relais).
+                var range: String? = null
+                var count = 0
                 while (true) {
                     val line = readLine(input) ?: break
                     if (line.isEmpty()) break
+                    if (++count > MAX_HEADER_LINES) {
+                        writeHead(out, 431, listOf("Content-Length" to "0"))
+                        out.flush()
+                        return
+                    }
                     val i = line.indexOf(':')
-                    if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
+                    if (i > 0 && line.substring(0, i).trim().equals("range", ignoreCase = true)) range = line.substring(i + 1).trim()
                 }
                 val parts = requestLine.split(' ')
                 if (parts.size < 2) return
@@ -131,7 +143,7 @@ class CastRelay(
                     else -> {
                         val target = resolve(parts[1])
                         if (target == null) writeHead(out, 404, listOf("Content-Length" to "0"))
-                        else proxy(target, method == "HEAD", headers["range"], out)
+                        else proxy(target, method == "HEAD", range, out)
                     }
                 }
                 out.flush()
@@ -217,6 +229,9 @@ class CastRelay(
     companion object {
         private const val MAX_ENTRIES = 4
         private const val MAX_LINKS = 4096
+        private const val MAX_HEADER_LINES = 64
+        /** Le Chromecast ouvre quelques connexions à la fois (liste, morceaux, piste audio) : large marge. */
+        private const val MAX_CONNECTIONS = 32
         private const val BUFFER = 64 * 1024
         private const val READ_TIMEOUT_MS = 30_000
         private const val MAX_PLAYLIST_BYTES = 4 * 1024 * 1024
@@ -282,6 +297,7 @@ class CastRelay(
             404 -> "Not Found"
             405 -> "Method Not Allowed"
             416 -> "Range Not Satisfiable"
+            431 -> "Request Header Fields Too Large"
             502 -> "Bad Gateway"
             else -> "Status"
         }

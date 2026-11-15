@@ -8,6 +8,7 @@ import fr.yannickuhrig.vyzo.cast.HlsRewriter
 import fr.yannickuhrig.vyzo.data.repo.Repository
 import fr.yannickuhrig.vyzo.data.repo.StreamSpec
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.Dispatcher
@@ -148,6 +149,26 @@ class CastRelayTest {
             assertEquals(204, it.code)
             assertTrue(it.header("Access-Control-Allow-Headers").orEmpty().contains("Range"))
         }
+    }
+
+    @Test
+    fun `requête aux en-têtes sans fin refusée`() {
+        val url = relay.publish(spec("/movie/film.mp4", live = false))!!.toHttpUrl()
+        // Le relais coupe au-delà de 64 lignes : selon le moment, on lit son 431 ou la connexion est déjà fermée.
+        val status = java.net.Socket(url.host, url.port).use { s ->
+            s.soTimeout = 5_000
+            runCatching {
+                val out = s.getOutputStream()
+                out.write("GET ${url.encodedPath} HTTP/1.1\r\n".toByteArray())
+                repeat(200) { out.write("X-Bourrage-$it: a\r\n".toByteArray()) }
+                out.write("\r\n".toByteArray())
+                out.flush()
+            }
+            runCatching { s.getInputStream().bufferedReader().readLine() }.getOrNull()
+        }
+        assertTrue("$status", status == null || status.startsWith("HTTP/1.1 431"))
+        // Et il continue de servir normalement.
+        get(url.toString()).use { assertEquals(200, it.code) }
     }
 
     @Test
