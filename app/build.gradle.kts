@@ -64,7 +64,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // Pas de repli sur la clé de debug : un APK signé ainsi ne s'installe pas par-dessus l'appli existante.
+            // Sans keystore, l'empaquetage release s'arrête (voir en bas du fichier) ; les tests en debug restent possibles.
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
         debug {
             applicationIdSuffix = ".debug"
@@ -157,4 +159,19 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.46.1")
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.46.1")
+}
+
+// Sans keystore, refuser d'empaqueter un APK ou un AAB release plutôt que d'en produire un inutilisable
+// (non signé, ou signé avec la clé de debug comme avant). Vérifié à l'exécution : configurer le projet
+// et lancer les tests en debug reste possible sans la clé, par exemple sur GitHub Actions.
+val hasReleaseKey = keystoreProps.isNotEmpty()
+tasks.configureEach {
+    if (!hasReleaseKey && Regex("""(package|sign)(Tv|Mobile)Release(Bundle)?""").matches(name)) {
+        doFirst {
+            throw GradleException(
+                "Version release impossible sans la clé de signature : keystore.properties introuvable (à la racine " +
+                    "ou dans keystore/). Pas de repli sur la clé de debug (l'APK ne s'installerait pas par-dessus l'appli)."
+            )
+        }
+    }
 }
