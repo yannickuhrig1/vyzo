@@ -100,7 +100,12 @@ class CastController(
         var source = spec
         var format = CastPlanner.formatFromUrl(spec)
         // Adresse sans extension (liens Stalker, flux « /play/123 »…) : les premiers octets disent ce que c'est.
-        if (format == CastFormat.UNKNOWN) format = CastPlanner.probe(spec)
+        // Film ou épisode : on regarde aussi, pour reconnaître un lien mort (page d'erreur du fournisseur) avant le Chromecast,
+        // qui ne dirait qu'« échec de chargement ».
+        if (format == CastFormat.UNKNOWN || !spec.isLive) {
+            val probed = CastPlanner.probe(spec)
+            if (probed != CastFormat.UNKNOWN) format = probed
+        }
         // Chaîne Xtream en MPEG-TS, que le Chromecast ne lit pas : le même serveur la sert aussi en HLS.
         if (format == CastFormat.TS && spec.isLive) {
             CastPlanner.xtreamHlsVariant(spec.url)?.let { hls ->

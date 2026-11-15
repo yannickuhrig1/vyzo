@@ -210,6 +210,9 @@ class CastRelayTest {
         assertEquals(CastFormat.MP4, CastPlanner.formatFromBytes(byteArrayOf(0, 0, 0, 0x20) + "ftypisom".toByteArray()))
         assertEquals(CastFormat.MKV, CastPlanner.formatFromBytes(byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte(), 1)))
         assertEquals(CastFormat.TS, CastPlanner.formatFromBytes(byteArrayOf(0x47, 0x40, 0x11, 0x10)))
+        // Lien mort : le fournisseur renvoie sa page d'erreur au lieu du film (constaté sur un vrai serveur Xtream).
+        assertEquals(CastFormat.NOT_VIDEO, CastPlanner.formatFromBytes("<!DOCTYPE html><html>".toByteArray(), "text/html; charset=UTF-8"))
+        assertEquals(CastFormat.NOT_VIDEO, CastPlanner.formatFromBytes("  <html><body>".toByteArray()))
     }
 
     @Test
@@ -235,6 +238,7 @@ class CastRelayTest {
     @Test
     fun `sondage des premiers octets chez le fournisseur`() = runBlocking {
         assertEquals(CastFormat.HLS, CastPlanner.probe(spec("/live/master.m3u8"), OkHttpClient()))
-        assertEquals(CastFormat.UNKNOWN, CastPlanner.probe(spec("/refused/x"), OkHttpClient()))
+        assertEquals(CastFormat.REFUSED, CastPlanner.probe(spec("/refused/x"), OkHttpClient()))
+        assertTrue(CastPlanner.decide(spec("/refused/x"), CastFormat.REFUSED) is CastDecision.Refuse)
     }
 }

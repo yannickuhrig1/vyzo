@@ -20,6 +20,10 @@ enum class CastFormat(val contentType: String?) {
     /** AVI, FLV, WMV… : non pris en charge par le Chromecast. */
     UNSUPPORTED(null),
     UNKNOWN(null),
+    /** Le fournisseur renvoie une page web (lien mort, titre retiré) au lieu de la vidéo. */
+    NOT_VIDEO(null),
+    /** Le fournisseur refuse le flux (titre introuvable, abonnement, limite de connexions). */
+    REFUSED(null),
 }
 
 sealed interface CastDecision {
@@ -51,8 +55,10 @@ object CastPlanner {
     fun formatFromBytes(head: ByteArray, contentType: String = ""): CastFormat {
         val t = contentType.lowercase()
         val text = String(head, 0, minOf(head.size, 16), Charsets.ISO_8859_1).removePrefix("ï»¿")
+        val lower = text.trimStart().lowercase()
         return when {
             "mpegurl" in t || text.startsWith("#EXTM3U") -> CastFormat.HLS
+            "text/html" in t || lower.startsWith("<!doctype") || lower.startsWith("<html") -> CastFormat.NOT_VIDEO
             "dash+xml" in t || (text.startsWith("<?xml") && "dash" in t) -> CastFormat.DASH
             head.size >= 8 && String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> CastFormat.MP4
             head.size >= 4 && head[0] == 0x1A.toByte() && head[1] == 0x45.toByte() && head[2] == 0xDF.toByte() && head[3] == 0xA3.toByte() ->
@@ -94,6 +100,8 @@ object CastPlanner {
             )
             CastFormat.UNSUPPORTED -> CastDecision.Refuse("Ce format de vidéo n'est pas lu par le Chromecast.")
             CastFormat.UNKNOWN -> CastDecision.Refuse("Format du flux inconnu : impossible de l'envoyer au Chromecast.")
+            CastFormat.NOT_VIDEO -> CastDecision.Refuse("Le fournisseur ne renvoie pas de vidéo pour ce titre (lien mort ou titre retiré).")
+            CastFormat.REFUSED -> CastDecision.Refuse("Le fournisseur refuse ce flux (titre introuvable, ou limite de connexions atteinte).")
             else -> CastDecision.Cast(format.contentType!!)
         }
     }
@@ -109,7 +117,7 @@ object CastPlanner {
             .build()
         runCatching {
             client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return@use CastFormat.UNKNOWN
+                if (!resp.isSuccessful) return@use if (resp.code in 400..499) CastFormat.REFUSED else CastFormat.UNKNOWN
                 val input = resp.body?.byteStream() ?: return@use CastFormat.UNKNOWN
                 val head = ByteArray(16)
                 var n = 0
