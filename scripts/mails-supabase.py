@@ -27,7 +27,7 @@ import urllib.request
 from pathlib import Path
 
 PROJECT_REF = "jucbmlwigbptgxqoiqih"
-SITE_URL = "https://yannickuhrig1.github.io/vyzo/"
+SITE_URL = "https://compte.vyzo.orage.dev/"
 API = f"https://api.supabase.com/v1/projects/{PROJECT_REF}/config/auth"
 MIN_PASSWORD = 10
 TEMPLATES = Path(__file__).resolve().parent.parent / "supabase" / "templates"
