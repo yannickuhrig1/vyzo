@@ -18,6 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import fr.yannickuhrig.vyzo.cast.CastDevice
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Tv
@@ -264,15 +267,42 @@ fun MessageBox(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Boîte de dialogue pour envoyer la lecture vers les autres écrans Vyzo du compte. */
+/**
+ * Boîte de dialogue pour envoyer la lecture vers les autres écrans Vyzo du compte et, sur téléphone, vers un appareil
+ * Google Cast ([onCastDevice] non null). [castingTo] : appareil Cast déjà utilisé, qu'on peut quitter d'ici.
+ */
 @Composable
-fun CastDialog(onSend: () -> Unit, onDismiss: () -> Unit) {
+fun CastDialog(
+    onSend: () -> Unit,
+    onDismiss: () -> Unit,
+    castDevices: List<CastDevice> = emptyList(),
+    onCastDevice: ((CastDevice) -> Unit)? = null,
+    castingTo: String? = null,
+    onStopCast: () -> Unit = {},
+) {
+    val actions = buildList {
+        add(ActionItem(label = "Envoyer vers mes écrans Vyzo (TV / PC)", icon = Icons.Default.Tv, detail = "Cloud Sync", onClick = onSend))
+        if (onCastDevice != null) {
+            if (castingTo != null) {
+                add(ActionItem(label = "Arrêter le Cast sur « $castingTo »", icon = Icons.Default.CastConnected, detail = "La lecture reprend sur le téléphone", onClick = onStopCast))
+            }
+            castDevices.filter { it.name != castingTo }.forEach { d ->
+                add(ActionItem(label = d.name, icon = Icons.Default.Cast, detail = d.description.ifBlank { "Google Cast" }) { onCastDevice(d) })
+            }
+            if (castDevices.isEmpty() && castingTo == null) {
+                add(
+                    ActionItem(
+                        label = "Recherche des appareils Cast…", icon = Icons.Default.Cast, enabled = false,
+                        detail = "Chromecast, TV ou box avec Chromecast intégré, sur le même Wi-Fi que le téléphone",
+                    ) {},
+                )
+            }
+        }
+    }
     ActionDialog(
         title = "Caster la lecture",
         subtitle = "Choisis un écran pour continuer la lecture",
-        actions = listOf(
-            ActionItem(label = "Envoyer vers mes écrans Vyzo (TV / PC)", icon = Icons.Default.Tv, detail = "Cloud Sync", onClick = onSend),
-        ),
+        actions = actions,
         onDismiss = onDismiss,
     )
 }

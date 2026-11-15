@@ -11,6 +11,11 @@
         android:required="false" />
 
     <application>
+        <!-- Google Cast : réglages du SDK (récepteur standard de Google, notification pendant le Cast). -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="fr.yannickuhrig.vyzo.cast.VyzoCastOptions" />
+
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

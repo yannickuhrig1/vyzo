@@ -134,6 +134,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.3")
     // Rangées de l'écran d'accueil d'Android TV : version TV seulement.
     "tvImplementation"("androidx.tvprovider:tvprovider:1.1.0")
+    // Google Cast (Chromecast) : version mobile seulement. Bibliothèque de Google non libre (voir README).
+    "mobileImplementation"("com.google.android.gms:play-services-cast-framework:22.3.1")
+    "mobileImplementation"("androidx.mediarouter:mediarouter:1.8.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.datastore:datastore-preferences:1.1.7")
 

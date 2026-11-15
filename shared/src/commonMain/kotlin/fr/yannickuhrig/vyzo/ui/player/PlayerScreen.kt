@@ -158,6 +158,7 @@ import fr.yannickuhrig.vyzo.player.audioDelayLabel
 import fr.yannickuhrig.vyzo.ui.common.ActionDialog
 import fr.yannickuhrig.vyzo.ui.common.ActionItem
 import fr.yannickuhrig.vyzo.ui.common.Badge
+import fr.yannickuhrig.vyzo.cast.CastConnection
 import fr.yannickuhrig.vyzo.ui.common.CastDialog
 import fr.yannickuhrig.vyzo.ui.common.Choice
 import fr.yannickuhrig.vyzo.ui.common.ChoiceDialog
@@ -293,6 +294,17 @@ fun PlayerScreen(
     var zapIndicator by remember { mutableStateOf<ZapFeedback?>(null) }
     var zapNonce by remember { mutableIntStateOf(0) }
     var castDialogVisible by remember { mutableStateOf(false) }
+    val castConnection by vm.castConnection.collectAsState()
+    val castBusy by vm.castBusy.collectAsState()
+    val castDevices by vm.castDevices.collectAsState()
+    val castDeviceName by vm.castDeviceName.collectAsState()
+    // Recherche des appareils Cast tant que la fenêtre de choix est ouverte (elle consomme du Wi-Fi et de la batterie).
+    if (castDialogVisible && vm.castAvailable) {
+        DisposableEffect(Unit) {
+            vm.startCastDiscovery()
+            onDispose { vm.stopCastDiscovery() }
+        }
+    }
 
     val isMultiView by vm.isMultiViewActive.collectAsState()
     val multiViewSlots by vm.multiViewSlots.collectAsState()
@@ -858,6 +870,11 @@ fun PlayerScreen(
             CircularProgressIndicator(Modifier.align(Alignment.Center).size(if (inPip) 28.dp else 52.dp), color = MaterialTheme.colorScheme.primary)
         }
         if (inPip) return@Box
+        // Lecture sur un appareil Cast : l'écran du téléphone devient sa télécommande.
+        if (castConnection == CastConnection.CONNECTED || castBusy) {
+            CastRemote(vm, message, onBack = onExit, onZap = { zap(it) }, modifier = Modifier.matchParentSize())
+            return@Box
+        }
 
         val err = ui.resolveError ?: playerError
         val noPanelOpen = !listVisible && !guideVisible && !optionsVisible && !moreOptionsVisible && trackType == null && slotForMenu == null
@@ -1374,6 +1391,16 @@ fun PlayerScreen(
                 castDialogVisible = false
             },
             onDismiss = { castDialogVisible = false },
+            castDevices = castDevices,
+            onCastDevice = if (vm.castAvailable) { d ->
+                castDialogVisible = false
+                vm.castTo(d)
+            } else null,
+            castingTo = castDeviceName.takeIf { castConnection == CastConnection.CONNECTED },
+            onStopCast = {
+                castDialogVisible = false
+                vm.stopCasting()
+            },
         )
     }
 }

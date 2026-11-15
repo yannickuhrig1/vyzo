@@ -61,6 +61,8 @@ fun androidContainer(
         recordingsFactory = { AndroidRecordingScheduler(app, it.db, it.settings, it.platform) },
         updateInstallerFactory = { AndroidUpdateInstaller(app) },
         realtimeEnabled = realtimeEnabled,
+        // Pas de Cast dans les tests (base en mémoire) : le SDK de Google n'y tourne pas.
+        castFactory = if (dbName == null) null else FlavorCast.factory(app),
     )
 }
 

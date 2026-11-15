@@ -25,9 +25,12 @@ Le nom et le logo IPVIO identifient le projet d'origine : Vyzo ne les utilise pa
 | ZXing | Apache 2.0 | Android, PC |
 | Kotlin, kotlinx.coroutines, kotlinx.serialization | Apache 2.0 | Android, PC |
 | vlcj (Caprica) | GNU GPL 3 | PC |
+| SDK Google Cast (`play-services-cast-framework`) et AndroidX MediaRouter | Conditions des API Google (non libre) ; Apache 2.0 pour MediaRouter | Android mobile |
 | libVLC (VideoLAN) | GNU LGPL 2.1 ou ultérieure | PC |
 
 Les bibliothèques sont téléchargées par Gradle à la compilation ; leurs textes de licence sont disponibles auprès de chaque projet.
+
+Le SDK Google Cast n'est pas libre : il est utilisé comme une bibliothèque système des téléphones équipés des services Google, et seulement dans Vyzo mobile (Vyzo TV et Vyzo PC n'en dépendent pas). Une version de Vyzo mobile sans lui ne proposerait pas le Chromecast.
 
 ## Services en ligne
 
@@ -38,4 +41,4 @@ Les bibliothèques sont téléchargées par Gradle à la compilation ; leurs tex
 | OMDb | Notes IMDb, Rotten Tomatoes et Metacritic, avec la clé personnelle de l'utilisateur | omdbapi.com |
 | TVmaze | Séries retrouvées par leur titre | tvmaze.com, licence CC BY-SA |
 
-Android TV, Google TV, Fire TV et TMDB sont des marques de leurs propriétaires respectifs. Vyzo n'est ni affilié à ces sociétés ni approuvé par elles.
+Android TV, Google TV, Chromecast, Google Cast, Fire TV et TMDB sont des marques de leurs propriétaires respectifs. Vyzo n'est ni affilié à ces sociétés ni approuvé par elles.

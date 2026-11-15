@@ -3,6 +3,10 @@ package fr.yannickuhrig.vyzo.ui.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.yannickuhrig.vyzo.AppContainer
+import fr.yannickuhrig.vyzo.cast.CastConnection
+import fr.yannickuhrig.vyzo.cast.CastDevice
+import fr.yannickuhrig.vyzo.cast.CastPlayState
+import fr.yannickuhrig.vyzo.cast.CastPlayback
 import fr.yannickuhrig.vyzo.data.catchup.CatchupBuilder
 import fr.yannickuhrig.vyzo.data.db.StreamQualityEntity
 import fr.yannickuhrig.vyzo.data.db.record
@@ -233,7 +237,7 @@ class PlayerViewModel(
 
     private fun play(spec: StreamSpec, pos: Long, tag: String) {
         currentTag = tag
-        c.player.play(spec, pos, tag = tag)
+        if (isCasting) castPlay(spec, pos, tag) else c.player.play(spec, pos, tag = tag)
     }
 
     val invertZap get() = c.settings.state.value.invertZap
@@ -255,7 +259,22 @@ class PlayerViewModel(
         }
     }
 
+    // État du Cast déclaré avant init {} : la lecture lancée par init peut déjà partir sur l'appareil.
+    /** Connexion ou premier envoi en cours (fenêtre de choix refermée, écran d'attente). */
+    val castBusy = MutableStateFlow(false)
+
+    /** Une session est ouverte : tout ce que lance cet écran part sur l'appareil Cast. */
+    val isCasting: Boolean get() = c.cast?.connection?.value == CastConnection.CONNECTED
+
+    /** Ce qui est sur l'appareil Cast, pour le reprendre sur le téléphone à la fin. */
+    private var castSpec: StreamSpec? = null
+    private var castTag: String? = null
+    private var castLastPosition = 0L
+    private var castEndedTag: String? = null
+    private var castJob: Job? = null
+
     init {
+        watchCast()
         recordStreamSize()
         viewModelScope.launch { start() }
         viewModelScope.launch {
@@ -717,6 +736,7 @@ class PlayerViewModel(
 
     /** Relance après une erreur ou un retour au premier plan. */
     fun replayCurrent() {
+        if (isCasting) return
         val ts = ui.value.timeshift
         when {
             // Direct en pause, différé pas encore lancé : on reste en pause.
@@ -1296,6 +1316,153 @@ class PlayerViewModel(
         message.value = "Envoyé vers mes écrans Vyzo"
     }
 
+    // ------------------------------------------------------------ Google Cast (Chromecast)
+
+    /** Cast possible sur cet appareil (appli mobile avec les services Google). */
+    val castAvailable: Boolean get() = c.cast != null
+    // Getters (pas de champs) : init {} lance la lecture avant que ces lignes, plus bas dans la classe, soient exécutées.
+    val castDevices: StateFlow<List<CastDevice>> get() = c.cast?.support?.devices ?: NO_CAST_DEVICES
+    val castConnection: StateFlow<CastConnection> get() = c.cast?.connection ?: NO_CAST_CONNECTION
+    val castDeviceName: StateFlow<String?> get() = c.cast?.deviceName ?: NO_CAST_NAME
+    val castPlayback: StateFlow<CastPlayback> get() = c.cast?.playback ?: NO_CAST_PLAYBACK
+    val castVolume: StateFlow<Float> get() = c.cast?.support?.volume ?: NO_CAST_VOLUME
+
+    fun startCastDiscovery() = c.cast?.support?.startDiscovery()
+    fun stopCastDiscovery() = c.cast?.support?.stopDiscovery()
+
+    /** Envoie la lecture en cours sur [device]. Le lecteur du téléphone s'arrête : il rend la connexion à l'abonnement. */
+    fun castTo(device: CastDevice) {
+        val cast = c.cast ?: return
+        viewModelScope.launch {
+            castBusy.value = true
+            try {
+                if (!cast.support.connect(device)) {
+                    message.value = "Connexion à « ${device.name} » impossible"
+                    return@launch
+                }
+                if (isMultiViewActive.value) exitMultiView()
+                val tag = currentTag ?: c.player.tag.value
+                val spec = c.player.current.value
+                if (spec == null || tag == null) {
+                    // Rien ne joue (erreur, chargement) : on relance ce qui est affiché, qui partira sur l'appareil.
+                    val ch = ui.value.channel
+                    if (ui.value.isLive && ch != null) playChannel(ch, force = true)
+                    else message.value = "Connecté à « ${device.name} » : relance la lecture pour l'y envoyer"
+                    return@launch
+                }
+                val pos = if (spec.isLive) 0L else c.player.currentPosition.coerceAtLeast(0)
+                if (!spec.isLive) saveProgress(pos, c.player.duration)
+                castPlay(spec, pos, tag)
+                castJob?.join()
+            } finally {
+                castBusy.value = false
+            }
+        }
+    }
+
+    /** Arrête le Cast ; la lecture reprend sur le téléphone, là où elle en était. */
+    fun stopCasting() {
+        c.cast?.disconnect()
+    }
+
+    fun castTogglePause() {
+        val cast = c.cast?.support ?: return
+        if (castPlayback.value.state == CastPlayState.PLAYING) cast.pause() else cast.play()
+    }
+
+    fun castSeekRelative(deltaMs: Long) {
+        val pb = castPlayback.value
+        val max = if (pb.durationMs > 0) pb.durationMs else Long.MAX_VALUE
+        c.cast?.support?.seekTo((pb.positionMs + deltaMs).coerceIn(0L, max))
+    }
+
+    fun castSeekTo(positionMs: Long) = c.cast?.support?.seekTo(positionMs.coerceAtLeast(0))
+
+    fun castVolumeStep(delta: Float) {
+        val cast = c.cast?.support ?: return
+        cast.setVolume((castVolume.value + delta).coerceIn(0f, 1f))
+    }
+
+    private fun castPlay(spec: StreamSpec, pos: Long, tag: String) {
+        val cast = c.cast ?: return
+        castSpec = spec
+        castTag = tag
+        castLastPosition = pos
+        val pb = cast.playback.value
+        // Déjà sur l'appareil (retour dans le lecteur pendant le Cast) : on reprend la main sans recharger.
+        if (pb.tag == tag && pb.state !in setOf(CastPlayState.IDLE, CastPlayState.ENDED, CastPlayState.ERROR)) return
+        c.player.stop()
+        castJob?.cancel()
+        castJob = viewModelScope.launch {
+            ui.update { it.copy(resolving = true, resolveError = null) }
+            val s = ui.value
+            val image = s.artwork.ifBlank { s.channel?.logo.orEmpty() }.ifBlank { null }
+            val error = cast.cast(spec, s.title, s.subtitle, image, pos, tag)
+            ui.update { it.copy(resolving = false) }
+            if (error != null) {
+                // Refusé par l'appareil : on regarde ici plutôt que de rester devant un écran vide.
+                message.value = error
+                castSpec = null
+                castTag = null
+                c.player.play(spec, pos, tag = tag)
+                if (pos > 0) c.player.seekTo(pos)
+            }
+        }
+    }
+
+    private fun watchCast() {
+        val cast = c.cast ?: return
+        viewModelScope.launch {
+            var previous = cast.connection.value
+            cast.connection.collect { now ->
+                if (previous == CastConnection.CONNECTED && now == CastConnection.DISCONNECTED) onCastEnded()
+                previous = now
+            }
+        }
+        viewModelScope.launch {
+            cast.playback.collect { pb ->
+                val tag = castTag ?: return@collect
+                if (pb.tag != tag) return@collect
+                if (pb.positionMs > 0) castLastPosition = pb.positionMs
+                // Fin d'un épisode sur l'appareil : on enchaîne le suivant comme dans le lecteur du téléphone.
+                if (pb.state == CastPlayState.ENDED && castEndedTag != tag) {
+                    castEndedTag = tag
+                    if (pb.durationMs > 0) saveProgress(pb.durationMs, pb.durationMs)
+                    if (kind == PlayKind.EPISODE && !stayAtEpisodeEnd) nextEpisode()
+                }
+            }
+        }
+        // Progression des films et épisodes regardés sur l'appareil Cast (reprise sur les autres écrans).
+        viewModelScope.launch {
+            while (isActive) {
+                delay(10_000L)
+                val pb = cast.playback.value
+                if (isCasting && castTag != null && pb.tag == castTag && pb.state == CastPlayState.PLAYING && !pb.isLive && pb.durationMs > 0) {
+                    saveProgress(pb.positionMs, pb.durationMs)
+                }
+            }
+        }
+    }
+
+    /** Session terminée (bouton « Arrêter », TV éteinte, notification) : la lecture revient sur le téléphone. */
+    private fun onCastEnded() {
+        castJob?.cancel()
+        val spec = castSpec ?: return
+        val tag = castTag ?: return
+        castSpec = null
+        castTag = null
+        val pos = castLastPosition
+        val ch = ui.value.channel
+        if (ui.value.isLive && ch != null && ui.value.catchupProgram == null) {
+            playChannel(ch, force = true)
+        } else {
+            if (pos > 0 && !spec.isLive) saveProgress(pos, castPlayback.value.durationMs)
+            c.player.play(spec, pos, tag = tag)
+            if (pos > 0) c.player.seekTo(pos)
+        }
+        message.value = "Lecture reprise sur le téléphone"
+    }
+
     fun canCatchupNow(): Boolean {
         val s = ui.value
         val ch = s.channel ?: return false
@@ -1303,6 +1470,12 @@ class PlayerViewModel(
         return s.isLive && c.repo.canCatchup(ch, p)
     }
 }
+
+private val NO_CAST_DEVICES = MutableStateFlow<List<CastDevice>>(emptyList())
+private val NO_CAST_CONNECTION = MutableStateFlow(CastConnection.DISCONNECTED)
+private val NO_CAST_NAME = MutableStateFlow<String?>(null)
+private val NO_CAST_PLAYBACK = MutableStateFlow(CastPlayback())
+private val NO_CAST_VOLUME = MutableStateFlow(1f)
 
 /** Nombre de séries dont on retient les pistes choisies. */
 private const val MAX_SERIES_TRACKS = 300

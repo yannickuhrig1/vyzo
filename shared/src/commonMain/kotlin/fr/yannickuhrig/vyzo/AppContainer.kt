@@ -45,6 +45,8 @@ class AppContainer(
     updateInstallerFactory: (AppContainer) -> UpdateInstaller,
     /** Notifications instantanées des autres appareils (désactivées dans les tests sur faux serveur). */
     realtimeEnabled: Boolean = true,
+    /** Google Cast : fourni par l'appli mobile seulement (null sur TV et sur PC). */
+    private val castFactory: ((AppContainer) -> fr.yannickuhrig.vyzo.cast.CastSupport?)? = null,
 ) {
     val sync = SyncManager(platform, db, settings, scope)
     val profiles = ProfileManager(db, settings, scope)
@@ -96,6 +98,10 @@ class AppContainer(
     fun unlockVault(pin: String): Boolean = parental.unlockVault(pin)
     fun lockVault() = parental.lockVault()
     val player: VideoPlayer by lazy { playerFactory(this) }
+    /** Lecture sur un Chromecast, relayée par le téléphone ; null si l'appareil ne le permet pas. */
+    val cast: fr.yannickuhrig.vyzo.cast.CastController? by lazy {
+        castFactory?.invoke(this)?.takeIf { it.available }?.let { fr.yannickuhrig.vyzo.cast.CastController(it, scope) }
+    }
     /** Crée une nouvelle instance de lecteur vidéo (utilisé notamment pour le Multi-View). */
     fun createPlayer(isSecondary: Boolean = true): VideoPlayer =
         newPlayerFactory?.invoke(this, isSecondary) ?: playerFactory(this)
