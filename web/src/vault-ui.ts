@@ -1,6 +1,6 @@
 import { friendlyError, UserError, type BackupData } from './backend'
 import { h, icon } from './dom'
-import { type BackupCounts } from './model'
+import { MIN_PASSWORD, type BackupCounts } from './model'
 import { act, confirmDialog, emptyCard, fullFmt, openDialog, toast } from './ui'
 import { backend, ensureRouteData, flushDeletes, refresh, renderView, resetStateForRestore, state } from './context'
 import { backupCountsOf, busy, countsText, passwordWithReveal, rememberBox } from './shared'
@@ -94,7 +94,7 @@ export async function lockNow() {
 }
 
 export function vaultGate(title = 'Abonnements chiffrés',
-  text = 'Tes identifiants IPTV sont chiffrés avec le mot de passe du compte : le serveur Vyzo ne peut pas les lire. Saisis-le pour les afficher et les modifier.') {
+  text = 'Tes identifiants IPTV sont chiffrés avec le mot de passe du compte : le serveur Vyzo n’en garde que des blocs illisibles. Saisis-le pour les afficher et les modifier.') {
   if (state.vault === 'missing') {
     return emptyCard('key', 'Rien de chiffré sur ce compte pour l’instant',
       'Connecte Vyzo au compte sur un de tes appareils : il crée la clé du compte et y range tes abonnements. Ils apparaîtront ici ensuite.')
@@ -126,15 +126,15 @@ export function titlesNotice(items: { title: string }[]) {
 export function backupDialog() {
   if (state.vault !== 'open') return unlockDialog()
   const account = state.account!
-  const pw = h('input', { id: 'bk-pw', type: 'password', autocomplete: 'new-password', minlength: 8, required: true })
-  const again = h('input', { id: 'bk-again', type: 'password', autocomplete: 'new-password', minlength: 8, required: true })
+  const pw = h('input', { id: 'bk-pw', type: 'password', autocomplete: 'new-password', minlength: MIN_PASSWORD, required: true })
+  const again = h('input', { id: 'bk-again', type: 'password', autocomplete: 'new-password', minlength: MIN_PASSWORD, required: true })
   const error = h('p', { class: 'form-error', role: 'alert' })
   const go_: HTMLButtonElement = h('button', { class: 'btn primary', type: 'submit' }, icon('download', 14), 'Créer le fichier')
   const form = h('form', {
     onsubmit: async (e: Event) => {
       e.preventDefault()
       error.textContent = ''
-      if (pw.value.length < 8) { error.textContent = 'Au moins 8 caractères.'; return pw.focus() }
+      if (pw.value.length < MIN_PASSWORD) { error.textContent = `Au moins ${MIN_PASSWORD} caractères.`; return pw.focus() }
       if (pw.value !== again.value) { error.textContent = 'Les deux mots de passe ne correspondent pas.'; return again.focus() }
       let made: { file: string; counts: BackupCounts } | null = null
       if (!await act(go_, async () => { made = await backend.exportBackup(account, pw.value) })) return

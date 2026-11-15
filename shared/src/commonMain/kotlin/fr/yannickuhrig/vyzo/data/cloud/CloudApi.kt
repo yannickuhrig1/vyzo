@@ -38,6 +38,13 @@ class CloudException(message: String, val code: String = "", val status: Int = 0
         code == "refresh_token_already_used" || code == "session_not_found" || code == "bad_jwt"
 }
 
+/**
+ * Longueur minimale d'un nouveau mot de passe (inscription), comme MIN_PASSWORD du site et password_min_length de
+ * Supabase Auth. Le mot de passe du compte protège aussi la clé des données chiffrées : un mot de passe court se casse
+ * hors ligne par quiconque obtient la ligne de clé. La connexion accepte toujours les anciens mots de passe plus courts.
+ */
+const val MIN_PASSWORD = 10
+
 /** Résultat d'une inscription : soit une session, soit un e-mail de confirmation envoyé. */
 sealed interface SignUpResult {
     data class SignedIn(val session: CloudSession) : SignUpResult
@@ -156,7 +163,7 @@ class CloudApi(
             code == "email_not_confirmed" || raw.contains("Email not confirmed", true) ->
                 "Adresse pas encore confirmée : ouvre le lien reçu par e-mail, puis reconnecte-toi"
             code == "user_already_exists" || raw.contains("already registered", true) -> "Un compte existe déjà avec cette adresse"
-            code == "weak_password" || raw.contains("Password should be", true) -> "Mot de passe trop court (6 caractères minimum)"
+            code == "weak_password" || raw.contains("Password should be", true) -> "Mot de passe trop court ou trop courant ($MIN_PASSWORD caractères minimum)"
             code == "email_address_invalid" || raw.contains("invalid format", true) || raw.contains("is invalid", true) -> "Adresse e-mail invalide"
             code.startsWith("over_") || status == 429 -> "Trop de tentatives, réessaie dans quelques minutes"
             code == "signup_disabled" -> "La création de compte est désactivée sur le serveur"

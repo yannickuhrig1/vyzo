@@ -6,6 +6,11 @@ confirmation obligatoire à l'inscription, liens qui mènent au site du compte, 
     python3 scripts/mails-supabase.py            # montre l'état actuel et ce qui changera, puis demande
     python3 scripts/mails-supabase.py --voir     # montre seulement l'état actuel
     python3 scripts/mails-supabase.py --resend   # règle aussi l'envoi par Resend (SMTP)
+    python3 scripts/mails-supabase.py --fuites   # refuse aussi les mots de passe divulgués (offre Pro de Supabase)
+
+Règles de mot de passe envoyées à chaque fois : 10 caractères minimum (comme MIN_PASSWORD des applis et du site : il
+protège aussi la clé des données chiffrées), changement de mot de passe avec une connexion récente seulement, et
+changement d'adresse confirmé sur l'ancienne et la nouvelle adresse. Une session volée ne suffit plus à prendre le compte.
 
 Avec --resend, l'adresse d'expéditeur doit être sur un domaine vérifié chez Resend (https://resend.com/domains) ; la
 clé d'API Resend (« re_… ») est demandée sans s'afficher, comme le jeton.
@@ -24,6 +29,7 @@ from pathlib import Path
 PROJECT_REF = "jucbmlwigbptgxqoiqih"
 SITE_URL = "https://yannickuhrig1.github.io/vyzo/"
 API = f"https://api.supabase.com/v1/projects/{PROJECT_REF}/config/auth"
+MIN_PASSWORD = 10
 TEMPLATES = Path(__file__).resolve().parent.parent / "supabase" / "templates"
 
 # (fichier, champ du sujet, champ du contenu, sujet)
@@ -97,6 +103,10 @@ def main() -> None:
     print(f"  Serveur d'envoi personnalisé (SMTP) : {cfg.get('smtp_host') + ' (' + str(cfg.get('smtp_sender_name') or '') + ')' if smtp else 'non'}")
     print(f"  Sujet du mail d'inscription         : {cfg.get('mailer_subjects_confirmation')}")
     print(f"  Alerte « mot de passe changé »      : {'oui' if cfg.get('mailer_notifications_password_changed_enabled') else 'non'}")
+    print(f"  Longueur minimale du mot de passe   : {cfg.get('password_min_length')}")
+    print(f"  Mot de passe : connexion récente    : {'oui' if cfg.get('security_update_password_require_reauthentication') else 'non'}")
+    print(f"  Adresse : confirmation des deux     : {'oui' if cfg.get('mailer_secure_email_change_enabled') else 'non'}")
+    print(f"  Mots de passe divulgués refusés     : {'oui' if cfg.get('password_hibp_enabled') else 'non'}")
     if not cfg.get("smtp_host") and not smtp_patch:
         print("\n  ATTENTION : sans serveur d'envoi personnalisé, Supabase n'envoie les e-mails qu'aux membres de l'équipe du")
         print("  projet, et seulement quelques-uns par heure. Les autres utilisateurs ne recevront rien. Voir")
@@ -109,7 +119,12 @@ def main() -> None:
         "uri_allow_list": allow_list(cfg.get("uri_allow_list", "")),
         "mailer_autoconfirm": False,
         "mailer_notifications_password_changed_enabled": True,
+        "password_min_length": MIN_PASSWORD,
+        "security_update_password_require_reauthentication": True,
+        "mailer_secure_email_change_enabled": True,
     }
+    if "--fuites" in sys.argv:
+        patch["password_hibp_enabled"] = True
     if cfg.get("smtp_host") and not cfg.get("smtp_sender_name"):
         patch["smtp_sender_name"] = "Vyzo"
     patch.update(smtp_patch)

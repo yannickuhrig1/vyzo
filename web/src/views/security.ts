@@ -1,6 +1,6 @@
 import { friendlyError, UserError } from '../backend'
 import { append, h, icon } from '../dom'
-import { lastBackupAt } from '../model'
+import { lastBackupAt, MIN_PASSWORD } from '../model'
 import { savedTheme, THEMES } from '../theme'
 import { act, confirmDialog, fullFmt, relative, toast } from '../ui'
 import { backend, canInstallApp, installApp, refresh, renderView, setTheme, state } from '../context'
@@ -39,15 +39,15 @@ export function securityView() {
 
   // Mot de passe
   const current = h('input', { id: 'pw-current', type: 'password', autocomplete: 'current-password', required: true })
-  const next = h('input', { id: 'pw-new', type: 'password', autocomplete: 'new-password', required: true, minlength: 8 })
-  const again = h('input', { id: 'pw-again', type: 'password', autocomplete: 'new-password', required: true, minlength: 8 })
+  const next = h('input', { id: 'pw-new', type: 'password', autocomplete: 'new-password', required: true, minlength: MIN_PASSWORD })
+  const again = h('input', { id: 'pw-again', type: 'password', autocomplete: 'new-password', required: true, minlength: MIN_PASSWORD })
   const pwError = h('p', { class: 'form-error', role: 'alert' })
   const pwSubmit = h('button', { class: 'btn primary', type: 'submit' }, 'Changer le mot de passe')
   const pwForm = h('form', {
     onsubmit: async (ev: Event) => {
       ev.preventDefault()
       pwError.textContent = ''
-      if (next.value.length < 8) { pwError.textContent = 'Le nouveau mot de passe doit faire au moins 8 caractères.'; next.focus(); return }
+      if (next.value.length < MIN_PASSWORD) { pwError.textContent = `Le nouveau mot de passe doit faire au moins ${MIN_PASSWORD} caractères.`; next.focus(); return }
       if (next.value !== again.value) { pwError.textContent = 'Les deux nouveaux mots de passe ne correspondent pas.'; again.focus(); return }
       if (next.value === current.value) { pwError.textContent = 'Le nouveau mot de passe est identique à l’actuel.'; next.focus(); return }
       pwSubmit.setAttribute('aria-busy', 'true')

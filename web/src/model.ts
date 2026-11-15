@@ -731,8 +731,11 @@ export function emailLinkError(code: string): string {
   return 'Lien invalide ou refusé par le serveur Vyzo. Demande un nouvel e-mail ci-dessous.'
 }
 
-/** Longueur minimale imposée par le serveur (Supabase Auth). */
-export const MIN_PASSWORD = 6
+/**
+ * Longueur minimale d'un nouveau mot de passe, comme MIN_PASSWORD des applis (CloudApi.kt) et password_min_length de
+ * Supabase Auth. Il protège aussi la clé des données chiffrées : trop court, il se casse hors ligne.
+ */
+export const MIN_PASSWORD = 10
 
 // ------------------------------------------------------------------ Helpers Phase 2 (Xtream, temps d'écran, alertes)
 

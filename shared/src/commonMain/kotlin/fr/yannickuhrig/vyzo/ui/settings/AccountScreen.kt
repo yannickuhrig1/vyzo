@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import fr.yannickuhrig.vyzo.AppContainer
 import fr.yannickuhrig.vyzo.data.cloud.CloudException
+import fr.yannickuhrig.vyzo.data.cloud.MIN_PASSWORD
 import fr.yannickuhrig.vyzo.data.cloud.SignUpResult
 import fr.yannickuhrig.vyzo.data.cloud.VaultState
 import fr.yannickuhrig.vyzo.data.remote.ConfigReceiver
@@ -169,7 +170,7 @@ fun AccountScreen() {
                                 "elles passeront au nouveau, ici, sur tes autres appareils et sur le site. Si tu as oublié l'ancien, reconnecte-toi d'abord sur un autre " +
                                 "appareil qui te le demande, puis réessaie ici. Sinon, repars de cet appareil : ce qui est illisible sur le compte sera remplacé par ses " +
                                 "playlists, son guide, ses réglages et ses chaînes."
-                            else "Ils sont chiffrés sur tes appareils : le serveur ne peut pas les lire. Saisis le mot de passe du compte une seule fois sur cet appareil.",
+                            else "Ils sont chiffrés sur tes appareils : le serveur n'en garde que des blocs illisibles sans le mot de passe du compte. Saisis-le une seule fois sur cet appareil.",
                             style = MaterialTheme.typography.bodyMedium, color = VyzoColors.TextDim,
                         )
                         if (tv) SettingRow(
@@ -212,7 +213,7 @@ fun AccountScreen() {
             item {
                 Text(
                     "Les autres appareils connectés au même compte retrouvent les mêmes profils et playlists. Les playlists, le guide, " +
-                        "les réglages et les chaînes sont chiffrés sur tes appareils, le serveur ne peut pas les lire. Supprimer une playlist ici la supprime partout. La reprise d'un film ou d'un épisode " +
+                        "les réglages et les chaînes sont chiffrés sur tes appareils : le serveur n'en garde que des blocs illisibles sans le mot de passe du compte. Supprimer une playlist ici la supprime partout. La reprise d'un film ou d'un épisode " +
                         "fonctionne quand les appareils utilisent la même playlist (même compte Xtream, même portail ou même lien M3U).",
                     style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim, modifier = Modifier.padding(14.dp),
                 )
@@ -255,7 +256,7 @@ fun AccountScreen() {
                     Button(enabled = !busy && email.contains('@') && password.isNotEmpty(), onClick = {
                         run { c.cloud.signIn(email, password) }
                     }) { Text("Se connecter") }
-                    OutlinedButton(enabled = !busy && email.contains('@') && password.length >= 6, onClick = {
+                    OutlinedButton(enabled = !busy && email.contains('@') && password.length >= MIN_PASSWORD, onClick = {
                         run {
                             when (c.cloud.signUp(email, password)) {
                                 is SignUpResult.SignedIn -> Unit
@@ -278,6 +279,10 @@ fun AccountScreen() {
                 }
                 error?.let { Text(it, color = VyzoColors.Red) }
                 info?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                if (password.isNotEmpty() && password.length < MIN_PASSWORD) Text(
+                    "Pour créer un compte : au moins $MIN_PASSWORD caractères. Ce mot de passe protège aussi tes playlists chiffrées.",
+                    style = MaterialTheme.typography.bodySmall, color = VyzoColors.TextDim,
+                )
                 Text(
                     "Les profils déjà créés sur cet appareil sont ajoutés au compte. Un profil qui porte le même nom qu'un profil du compte " +
                         "est fusionné avec lui (progression la plus récente conservée). Les profils locaux restent sur cet appareil.",

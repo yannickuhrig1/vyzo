@@ -155,13 +155,46 @@ function renderMailSent(address: string) {
   back.focus()
 }
 
-/** Arrivée depuis un lien d'e-mail : on le vérifie, puis la suite dépend de son type. */
+/**
+ * Arrivée depuis un lien d'e-mail : on le vérifie, puis la suite dépend de son type.
+ * Un compte déjà ouvert ici n'est pas remplacé sans accord : quelqu'un peut envoyer un lien valable pour SON compte
+ * (« mot de passe oublié » demandé chez lui) et faire saisir à la victime ses abonnements dans le mauvais compte.
+ */
 export async function openEmailLink(link: EmailLinkParams) {
   authPage('Vérification', h('div', {}, h('h1', {}, 'Vérification du lien…'), h('p', { class: 'lead' }, 'Un instant.')))
   if (link.mode === 'error') {
     renderForgot('', emailLinkError(link.code))
     return
   }
+  const current = await backend.currentAccount().catch(() => null)
+  if (current) renderLinkWhileSignedIn(link, current)
+  else await verifyLink(link)
+}
+
+function renderLinkWhileSignedIn(link: EmailLinkParams, current: Account) {
+  const what = link.mode === 'token' && link.type === 'recovery' ? 'choisir un nouveau mot de passe'
+    : link.mode === 'token' && link.type === 'email_change' ? 'confirmer un changement d’adresse'
+      : 'confirmer une adresse'
+  const proceed = h('button', { class: 'btn primary wide', type: 'button' }, 'Ouvrir le lien')
+  const stay = h('button', { class: 'btn outline wide', type: 'button', onclick: () => void enter(current) }, 'Rester sur mon compte')
+  proceed.addEventListener('click', () => {
+    proceed.disabled = true
+    stay.disabled = true
+    void verifyLink(link)
+  })
+  authPage('Lien reçu par e-mail', h('div', {},
+    h('div', { class: 'auth-badge' }, icon('mail', 22)),
+    h('h1', {}, 'Lien reçu par e-mail'),
+    h('p', { class: 'lead' }, `Ce navigateur est connecté au compte ${current.email}. Le lien sert à ${what}, peut-être pour un autre compte : l’ouvrir ferme la session actuelle ici.`),
+    h('p', { class: 'auth-warn' }, 'N’ouvre que le lien d’un e-mail que tu viens de demander toi-même. Si quelqu’un te l’a envoyé, reste sur ton compte.'),
+    proceed,
+    stay,
+  ))
+  stay.focus()
+}
+
+async function verifyLink(link: EmailLinkParams) {
+  authPage('Vérification', h('div', {}, h('h1', {}, 'Vérification du lien…'), h('p', { class: 'lead' }, 'Un instant.')))
   try {
     const { type, account } = await backend.verifyEmailLink(link)
     if (type === 'recovery') renderNewPassword(account)
@@ -184,7 +217,7 @@ function renderConfirmed(address: string) {
     h('h1', {}, 'Adresse confirmée'),
     h('p', { class: 'lead' }, `Le compte ${address} est prêt. Reviens dans Vyzo, sur la TV, le téléphone ou le PC, et connecte-toi avec cette adresse et ton mot de passe.`),
     go,
-    h('p', { class: 'fine' }, 'Tes playlists et réglages sont chiffrés sur tes appareils : le serveur ne peut pas les lire.'),
+    h('p', { class: 'fine' }, 'Tes playlists et réglages sont chiffrés sur tes appareils : le serveur n’en garde que des blocs illisibles sans le mot de passe du compte.'),
   ))
   go.focus()
 }
